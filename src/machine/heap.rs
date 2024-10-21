@@ -3,6 +3,7 @@ use crate::atom_table::*;
 use crate::forms::*;
 use crate::machine::machine_indices::*;
 use crate::machine::partial_string::*;
+use crate::machine::streams::*;
 use crate::parser::ast::*;
 use crate::types::*;
 
@@ -71,6 +72,9 @@ impl TryFrom<HeapCellValue> for Literal {
                      }
                      (ArenaHeaderTag::IndexPtr, ip) => {
                          Ok(Literal::CodeIndex(CodeIndex::from(ip)))
+                     }
+                     (ArenaHeaderTag::Stream, stream) => {
+                         Ok(Literal::Atom(stream.options().get_alias().unwrap()))
                      }
                      _ => {
                          Err(())

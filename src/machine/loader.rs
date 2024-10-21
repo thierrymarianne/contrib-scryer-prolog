@@ -1396,8 +1396,11 @@ impl MachineState {
                 (HeapCellValueTag::Var | HeapCellValueTag::AttrVar | HeapCellValueTag::StackVar, h) => {
                     term_stack.push(Term::Var(Cell::default(), VarPtr::from(format!("_{}", h))));
                 }
-                (HeapCellValueTag::Cons | HeapCellValueTag::CStr | HeapCellValueTag::Fixnum |
+                (HeapCellValueTag::CStr | HeapCellValueTag::Fixnum |
                  HeapCellValueTag::Char | HeapCellValueTag::F64) => {
+                    term_stack.push(Term::Literal(Cell::default(), Literal::try_from(addr).unwrap()));
+                }
+                (HeapCellValueTag::Cons) => {
                     term_stack.push(Term::Literal(Cell::default(), Literal::try_from(addr).unwrap()));
                 }
                 (HeapCellValueTag::Atom, (name, arity)) => {
