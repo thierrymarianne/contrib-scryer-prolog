@@ -31,3 +31,18 @@ pub(crate) fn load_module_test<T: Expectable>(file: &str, expected: T) {
     let mut wam = Machine::with_test_streams();
     expected.assert_eq(wam.test_load_file(file).as_slice());
 }
+
+pub(crate) fn load_module_test_with_tokio_runtime<T: Expectable>(file: &str, expected: T) {
+    use scryer_prolog::machine::mock_wam::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async move {
+        let mut wam = Machine::new(Default::default());
+        expected.assert_eq(wam.test_load_file(file).as_slice())
+    });
+}
