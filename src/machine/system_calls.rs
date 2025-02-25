@@ -56,6 +56,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::net::{TcpListener, TcpStream};
 use std::num::NonZeroU32;
 use std::process;
+use std::ptr::copy;
 #[cfg(feature = "http")]
 use std::str::FromStr;
 #[cfg(feature = "http")]
@@ -92,6 +93,8 @@ use roxmltree;
 use futures::future;
 #[cfg(feature = "http")]
 use reqwest::Url;
+use tokio::runtime::Handle;
+use tokio::task;
 #[cfg(feature = "http")]
 use warp::hyper::header::{HeaderName, HeaderValue};
 #[cfg(feature = "http")]
@@ -4493,13 +4496,7 @@ impl Machine {
             let address_string = address_sink.as_str(); //to_string();
             let address: Url = address_string.parse().unwrap();
 
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(5))
-                .connect_timeout(Duration::from_secs(5))
-                .pool_idle_timeout(Duration::from_secs(5))
-                .http2_keep_alive_timeout(Duration::from_secs(5))
-                .build()
-                .unwrap();
+            let client = reqwest::Client::builder().build().unwrap();
 
             // request
             let mut req = client.request(method, address).headers(headers);
@@ -4508,76 +4505,75 @@ impl Machine {
                 req = req.body(bytes);
             }
 
-            // do it!
-            match futures::executor::block_on(req.send()) {
-                Ok(resp) => {
-                    // status code
-                    let status = resp.status().as_u16();
-                    self.machine_st
-                        .unify_fixnum(Fixnum::build_with(status as i64), address_status);
-                    // headers
-                    let mut headers: Vec<HeapCellValue> = vec![];
+            task::block_in_place(move || {
+                match Handle::current().block_on(req.send()) {
+                    Ok(resp) => {
+                        let status = resp.status().as_u16();
+                        self.machine_st
+                            .unify_fixnum(Fixnum::build_with(status as i64), address_status);
 
-                    for (header_name, header_value) in resp.headers().iter() {
-                        let string_cell = resource_error_call_result!(
-                            self.machine_st,
-                            self.machine_st
+                        let mut headers: Vec<HeapCellValue> = vec![];
+
+                        for (header_name, header_value) in resp.headers().iter() {
+                            let string_cell = self
+                                .machine_st
                                 .allocate_cstr(header_value.to_str().unwrap())
-                        );
+                                .unwrap();
 
-                        let header_term = functor!(
-                            AtomTable::build_with(&self.machine_st.atom_tbl, header_name.as_str()),
-                            [cell(string_cell)]
-                        );
+                            let header_term = functor!(
+                                AtomTable::build_with(
+                                    &self.machine_st.atom_tbl,
+                                    header_name.as_str()
+                                ),
+                                [cell(string_cell)]
+                            );
 
-                        let mut functor_writer = Heap::functor_writer(header_term);
+                            let mut functor_writer = Heap::functor_writer(header_term);
 
-                        let functor_cell = resource_error_call_result!(
-                            self.machine_st,
-                            functor_writer(&mut self.machine_st.heap)
-                        );
+                            let functor_cell = functor_writer(&mut self.machine_st.heap).unwrap();
 
-                        headers.push(functor_cell);
-                    }
+                            headers.push(functor_cell);
+                        }
 
-                    let headers_list_cell = resource_error_call_result!(
-                        self.machine_st,
-                        sized_iter_to_heap_list(
+                        let headers_list_cell = sized_iter_to_heap_list(
                             &mut self.machine_st.heap,
                             headers.len(),
                             headers.into_iter(),
                         )
-                    );
+                        .unwrap();
 
-                    unify!(
-                        self.machine_st,
-                        headers_list_cell,
-                        self.machine_st.registers[6]
-                    );
+                        unify!(
+                            self.machine_st,
+                            headers_list_cell,
+                            self.machine_st.registers[6]
+                        );
 
-                    // body
-                    let reader = futures::executor::block_on(resp.bytes()).unwrap().reader();
+                        // body
+                        let reader = futures::executor::block_on(resp.bytes()).unwrap().reader();
 
-                    let mut stream = Stream::from_http_stream(
-                        AtomTable::build_with(&self.machine_st.atom_tbl, &address_string),
-                        reader,
-                        &mut self.machine_st.arena,
-                    );
-                    *stream.options_mut() = StreamOptions::default();
+                        let address_string = address_sink.as_str();
+                        let mut stream = Stream::from_http_stream(
+                            AtomTable::build_with(&self.machine_st.atom_tbl, &address_string),
+                            reader,
+                            &mut self.machine_st.arena,
+                        );
+                        *stream.options_mut() = StreamOptions::default();
 
-                    self.indices
-                        .add_stream(stream, atom!("http_open"), 3)
-                        .map_err(|stub_gen| stub_gen(&mut self.machine_st))?;
+                        self.indices
+                            .add_stream(stream, atom!("http_open"), 3)
+                            .map_err(|stub_gen| stub_gen(&mut self.machine_st))
+                            .unwrap();
 
-                    let stream = stream_as_cell!(stream);
+                        let stream = stream_as_cell!(stream);
 
-                    let stream_addr = self.deref_register(2);
-                    self.machine_st.bind(stream_addr.as_var().unwrap(), stream);
+                        let stream_addr = self.deref_register(2);
+                        self.machine_st.bind(stream_addr.as_var().unwrap(), stream);
+                    }
+                    Err(_) => {
+                        self.machine_st.fail = true;
+                    }
                 }
-                Err(_) => {
-                    self.machine_st.fail = true;
-                }
-            }
+            });
         } else {
             let err = self
                 .machine_st
