@@ -53,11 +53,6 @@ impl<R> CharReader<R> {
     }
 
     #[inline]
-    pub fn inner(&self) -> &R {
-        &self.inner
-    }
-
-    #[inline]
     pub fn inner_mut(&mut self) -> &mut R {
         &mut self.inner
     }
@@ -98,10 +93,6 @@ impl<R> CharReader<R> {
 
     pub fn buffer(&self) -> &[u8] {
         &self.buf[self.pos..]
-    }
-
-    pub fn into_inner(self) -> R {
-        self.inner
     }
 
     pub fn reset_buffer(&mut self) {
@@ -192,7 +183,7 @@ impl<R: Read> CharRead for CharReader<R> {
                 } else if self.pos >= self.buf.len() {
                     return None;
                 } else if self.buf.len() - self.pos >= 4 && self.pos < e.valid_up_to() {
-                    return match str::from_utf8(&self.buf[self.pos..e.valid_up_to()]) {
+                    return match str::from_utf8(&self.buf[self.pos..self.pos + e.valid_up_to()]) {
                         Ok(s) => {
                             let mut chars = s.chars();
                             let c = chars.next().unwrap();
@@ -200,7 +191,7 @@ impl<R: Read> CharRead for CharReader<R> {
                             Some(Ok(c))
                         }
                         Err(e) => {
-                            let badbytes = self.buf[self.pos..e.valid_up_to()].to_vec();
+                            let badbytes = self.buf[self.pos..self.pos + e.valid_up_to()].to_vec();
 
                             Some(Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
@@ -327,12 +318,11 @@ impl<R: Read> Read for CharReader<R> {
             return self.inner.read_vectored(bufs);
         }
 
-        let nread = {
-            self.refresh_buffer()?;
-            (&self.buf[self.pos..]).read_vectored(bufs)?
-        };
+        self.refresh_buffer()?;
 
+        let nread = (&self.buf[self.pos..]).read_vectored(bufs)?;
         self.consume(nread);
+
         Ok(nread)
     }
 }
@@ -380,7 +370,6 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
-    #[cfg_attr(miri, ignore = "slow and not very relevant")]
     fn plain_string() {
         let mut read_string = CharReader::new(Cursor::new("a string"));
 
@@ -393,7 +382,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "slow and not very relevant")]
     fn greek_string() {
         let mut read_string = CharReader::new(Cursor::new("λέξη"));
 
@@ -406,7 +394,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "slow and not very relevant")]
     fn russian_string() {
         let mut read_string = CharReader::new(Cursor::new("слово"));
 

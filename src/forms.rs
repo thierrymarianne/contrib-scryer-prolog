@@ -24,8 +24,6 @@ use std::fmt;
 use std::ops::{AddAssign, Deref, DerefMut};
 use std::path::PathBuf;
 
-use crate::{is_infix, is_postfix};
-
 pub type PredicateKey = (Atom, usize); // name, arity.
 
 /*
@@ -159,17 +157,6 @@ impl ChunkedTermVec {
     pub fn reserve_branch(&mut self, capacity: usize) {
         self.chunk_vec
             .push_back(ChunkedTerms::Branch(Vec::with_capacity(capacity)));
-    }
-
-    pub fn push_branch_arm(&mut self, branch: VecDeque<ChunkedTerms>) {
-        match self.chunk_vec.back_mut().unwrap() {
-            ChunkedTerms::Branch(branches) => {
-                branches.push(branch);
-            }
-            ChunkedTerms::Chunk(_) => {
-                self.chunk_vec.push_back(ChunkedTerms::Branch(vec![branch]));
-            }
-        }
     }
 
     #[inline]
@@ -403,16 +390,6 @@ pub struct OpDecl {
     pub(crate) name: Atom,
 }
 
-#[inline(always)]
-pub(crate) fn fixity(spec: u32) -> Fixity {
-    match spec {
-        XFY | XFX | YFX => Fixity::In,
-        XF | YF => Fixity::Post,
-        FX | FY => Fixity::Pre,
-        _ => unreachable!(),
-    }
-}
-
 impl OpDecl {
     #[inline]
     pub(crate) fn new(op_desc: OpDesc, name: Atom) -> Self {
@@ -429,7 +406,7 @@ impl OpDecl {
     }
 
     pub(crate) fn insert_into_op_dir(&self, op_dir: &mut OpDir) -> Option<OpDesc> {
-        let key = (self.name, fixity(self.op_desc.get_spec() as u32));
+        let key = (self.name, self.op_desc.get_spec().fixity());
 
         if let Some(cell) = op_dir.get_mut(&key) {
             let (old_prec, old_spec) = cell.get();
@@ -447,7 +424,7 @@ impl OpDecl {
     ) -> Result<(), SessionError> {
         let (spec, name) = (self.op_desc.get_spec(), self.name);
 
-        if is_infix!(spec as u32) {
+        if spec.is_infix() {
             if let Some(desc) = existing_desc {
                 if desc.post > 0 {
                     return Err(SessionError::OpIsInfixAndPostFix(name));
@@ -455,7 +432,7 @@ impl OpDecl {
             }
         }
 
-        if is_postfix!(spec as u32) {
+        if spec.is_postfix() {
             if let Some(desc) = existing_desc {
                 if desc.inf > 0 {
                     return Err(SessionError::OpIsInfixAndPostFix(name));

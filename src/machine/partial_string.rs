@@ -104,11 +104,6 @@ impl<'a> HeapPStrIter<'a> {
     }
 
     #[inline(always)]
-    pub fn num_steps(&self) -> usize {
-        self.brent_st.num_steps()
-    }
-
-    #[inline(always)]
     pub fn chars(mut self) -> PStrCharsIter<'a> {
         let item = self.next();
         PStrCharsIter { iter: self, item }
@@ -218,8 +213,7 @@ impl<'a> HeapPStrIter<'a> {
         self.brent_st.hare = orig_hare;
     }
 
-    #[allow(clippy::inherent_to_string)]
-    pub fn to_string(&mut self) -> String {
+    pub fn to_string_mut(&mut self) -> String {
         let mut buf = String::with_capacity(32);
 
         for iteratee in self.by_ref() {
@@ -801,7 +795,7 @@ mod test {
     use crate::machine::mock_wam::*;
 
     #[test]
-    #[cfg_attr(miri, ignore = "blocked on streams.rs UB")]
+    #[cfg_attr(miri, ignore = "it takes too long to run")]
     fn pstr_iter_tests() {
         let mut wam = MockWAM::new();
 

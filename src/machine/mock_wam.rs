@@ -1,9 +1,6 @@
-pub use crate::arena::*;
-pub use crate::atom_table::*;
 use crate::heap_print::*;
 pub use crate::machine::heap::*;
 pub use crate::machine::machine_state::*;
-pub use crate::machine::stack::*;
 pub use crate::machine::streams::*;
 pub use crate::machine::*;
 pub use crate::parser::ast::*;
@@ -23,9 +20,10 @@ use std::ops::{Deref, DerefMut, Index, IndexMut};
 pub struct MockWAM {
     pub machine_st: MachineState,
     pub op_dir: OpDir,
-    pub flags: MachineFlags,
+    //pub flags: MachineFlags,
 }
 
+#[allow(dead_code)]
 impl MockWAM {
     pub fn new() -> Self {
         let op_dir = default_op_dir();
@@ -33,7 +31,7 @@ impl MockWAM {
         Self {
             machine_st: MachineState::new(),
             op_dir,
-            flags: MachineFlags::default(),
+            //flags: MachineFlags::default(),
         }
     }
 
@@ -233,10 +231,7 @@ pub(crate) fn parse_and_write_parsed_term_to_heap(
 }
 
 impl Machine {
-    pub fn with_test_streams() -> Self {
-        Machine::new(MachineConfig::in_memory())
-    }
-
+    /// For use in tests.
     pub fn test_load_file(&mut self, file: &str) -> Vec<u8> {
         let stream = Stream::from_owned_string(
             std::fs::read_to_string(AsRef::<std::path::Path>::as_ref(file)).unwrap(),
@@ -247,6 +242,7 @@ impl Machine {
         self.user_output.bytes().map(|b| b.unwrap()).collect()
     }
 
+    /// For use in tests.
     pub fn test_load_string(&mut self, code: &str) -> Vec<u8> {
         let stream = Stream::from_owned_string(code.to_owned(), &mut self.machine_st.arena);
 
@@ -260,16 +256,15 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg_attr(miri, ignore = "blocked on streams.rs UB")]
     fn unify_tests() {
         let mut wam = MachineState::new();
         let mut op_dir = default_op_dir();
 
-        op_dir.insert((atom!("+"), Fixity::In), OpDesc::build_with(500, YFX as u8));
-        op_dir.insert((atom!("-"), Fixity::In), OpDesc::build_with(500, YFX as u8));
-        op_dir.insert((atom!("*"), Fixity::In), OpDesc::build_with(500, YFX as u8));
-        op_dir.insert((atom!("/"), Fixity::In), OpDesc::build_with(400, YFX as u8));
-        op_dir.insert((atom!("="), Fixity::In), OpDesc::build_with(700, XFX as u8));
+        op_dir.insert((atom!("+"), Fixity::In), OpDesc::build_with(500, YFX));
+        op_dir.insert((atom!("-"), Fixity::In), OpDesc::build_with(500, YFX));
+        op_dir.insert((atom!("*"), Fixity::In), OpDesc::build_with(500, YFX));
+        op_dir.insert((atom!("/"), Fixity::In), OpDesc::build_with(400, YFX));
+        op_dir.insert((atom!("="), Fixity::In), OpDesc::build_with(700, XFX));
 
         {
             parse_and_write_parsed_term_to_heap(&mut wam, "f(X,X).", &op_dir).unwrap();
@@ -482,15 +477,14 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "blocked on streams.rs UB")]
     fn test_unify_with_occurs_check() {
         let mut wam = MachineState::new();
         let mut op_dir = default_op_dir();
 
-        op_dir.insert((atom!("+"), Fixity::In), OpDesc::build_with(500, YFX as u8));
-        op_dir.insert((atom!("-"), Fixity::In), OpDesc::build_with(500, YFX as u8));
-        op_dir.insert((atom!("*"), Fixity::In), OpDesc::build_with(400, YFX as u8));
-        op_dir.insert((atom!("/"), Fixity::In), OpDesc::build_with(400, YFX as u8));
+        op_dir.insert((atom!("+"), Fixity::In), OpDesc::build_with(500, YFX));
+        op_dir.insert((atom!("-"), Fixity::In), OpDesc::build_with(500, YFX));
+        op_dir.insert((atom!("*"), Fixity::In), OpDesc::build_with(400, YFX));
+        op_dir.insert((atom!("/"), Fixity::In), OpDesc::build_with(400, YFX));
 
         {
             parse_and_write_parsed_term_to_heap(&mut wam, "f(X,X).", &op_dir).unwrap();

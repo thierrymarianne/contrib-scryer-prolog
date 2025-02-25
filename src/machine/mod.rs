@@ -1,4 +1,5 @@
 pub mod args;
+#[macro_use]
 pub mod arithmetic_ops;
 pub mod attributed_variables;
 pub mod code_walker;
@@ -19,7 +20,6 @@ pub mod machine_indices;
 pub mod machine_state;
 pub mod machine_state_impl;
 pub mod mock_wam;
-pub mod parsed_results;
 pub mod partial_string;
 pub mod preprocessor;
 pub mod stack;
@@ -54,20 +54,21 @@ use lazy_static::lazy_static;
 use ordered_float::OrderedFloat;
 
 use rand::rngs::StdRng;
-use rand::SeedableRng;
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::env;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
-
-use self::config::MachineConfig;
-use self::parsed_results::*;
+use std::sync::OnceLock;
 
 lazy_static! {
     pub static ref INTERRUPT: AtomicBool = AtomicBool::new(false);
 }
 
+/// An instance of Scryer Prolog.
+///
+/// Created with [`MachineBuilder::build`](crate::machine::config::MachineBuilder::build).
 #[derive(Debug)]
 pub struct Machine {
     pub(super) machine_st: MachineState,
@@ -110,10 +111,59 @@ impl LoadContext {
 
 #[inline]
 fn current_dir() -> PathBuf {
-    env::current_dir().unwrap_or(PathBuf::from("./"))
+    if !cfg!(miri) {
+        env::current_dir().unwrap_or(PathBuf::from("./"))
+    } else {
+        PathBuf::from("./")
+    }
 }
 
-include!(concat!(env!("OUT_DIR"), "/libraries.rs"));
+#[cfg(not(feature = "rust-version-1.80"))]
+mod libraries {
+    use indexmap::IndexMap;
+    use std::sync::OnceLock;
+
+    fn libraries() -> &'static IndexMap<&'static str, &'static str> {
+        static LIBRARIES: OnceLock<IndexMap<&'static str, &'static str>> = OnceLock::new();
+        LIBRARIES.get_or_init(|| {
+            let mut m = IndexMap::new();
+
+            include!(concat!(env!("OUT_DIR"), "/libraries.rs"));
+
+            m
+        })
+    }
+
+    pub(crate) fn contains(name: &str) -> bool {
+        libraries().contains_key(name)
+    }
+
+    pub(crate) fn get(name: &str) -> Option<&'static str> {
+        libraries().get(name).copied()
+    }
+}
+
+#[cfg(feature = "rust-version-1.80")]
+mod libraries {
+    use indexmap::IndexMap;
+    use std::sync::LazyLock;
+
+    static LIBRARIES: LazyLock<IndexMap<&'static str, &'static str>> = LazyLock::new(|| {
+        let mut m = IndexMap::new();
+
+        include!(concat!(env!("OUT_DIR"), "/libraries.rs"));
+
+        m
+    });
+
+    pub(crate) fn contains(name: &str) -> bool {
+        LIBRARIES.contains_key(name)
+    }
+
+    pub(crate) fn get(name: &str) -> Option<&'static str> {
+        LIBRARIES.get(name).copied()
+    }
+}
 
 pub static BREAK_FROM_DISPATCH_LOOP_LOC: usize = 0;
 pub static INSTALL_VERIFY_ATTR_INTERRUPT: usize = 1;
@@ -200,7 +250,7 @@ pub(crate) fn get_structure_index(value: HeapCellValue) -> Option<CodeIndex> {
 
 impl Machine {
     #[inline]
-    pub fn prelude_view_and_machine_st(&mut self) -> (MachinePreludeView, &mut MachineState) {
+    fn prelude_view_and_machine_st(&mut self) -> (MachinePreludeView, &mut MachineState) {
         (
             MachinePreludeView {
                 indices: &mut self.indices,
@@ -211,6 +261,7 @@ impl Machine {
         )
     }
 
+    /// Gets the current inference count.
     pub fn get_inference_count(&mut self) -> u64 {
         self.machine_st
             .cwil
@@ -220,15 +271,12 @@ impl Machine {
             .unwrap()
     }
 
-    pub fn throw_session_error(&mut self, err: SessionError, key: PredicateKey) {
-        let err = self.machine_st.session_error(err);
-        let stub = functor_stub(key.0, key.1);
-        let err = self.machine_st.error_form(err, stub);
-
-        self.machine_st.throw_exception(err);
-    }
-
-    pub fn run_module_predicate(
+    /// Runs the predicate `key` in `module_name` until completion.
+    /// Siltently ignores failure, thrown errors and choice points.
+    ///
+    /// Consider using [`Machine::run_query`] if you wish to handle
+    /// predicates that may fail, leave a choice point or throw.
+    pub(crate) fn run_module_predicate(
         &mut self,
         module_name: Atom,
         key: PredicateKey,
@@ -236,6 +284,8 @@ impl Machine {
         if let Some(module) = self.indices.modules.get(&module_name) {
             if let Some(code_index) = module.code_dir.get(&key) {
                 let p = code_index.local().unwrap();
+                // Leave a halting choice point to backtrack to in case the predicate fails or throws.
+                self.allocate_stub_choice_point();
 
                 self.machine_st.cp = BREAK_FROM_DISPATCH_LOOP_LOC;
                 self.machine_st.p = p;
@@ -247,7 +297,7 @@ impl Machine {
         unreachable!();
     }
 
-    pub fn load_file(&mut self, path: &str, stream: Stream) {
+    fn load_file(&mut self, path: &str, stream: Stream) {
         self.machine_st.registers[1] = stream_as_cell!(stream);
         self.machine_st.registers[2] =
             atom_as_cell!(AtomTable::build_with(&self.machine_st.atom_tbl, path));
@@ -255,13 +305,16 @@ impl Machine {
         self.run_module_predicate(atom!("loader"), (atom!("file_load"), 2));
     }
 
-    fn load_top_level(&mut self, program: &'static str) {
+    fn load_top_level(&mut self, program: Cow<'static, str>) {
         let mut path_buf = current_dir();
 
         path_buf.push("src/toplevel.pl");
 
         let path = path_buf.to_str().unwrap();
-        let toplevel_stream = Stream::from_static_string(program, &mut self.machine_st.arena);
+        let toplevel_stream = match program {
+            Cow::Borrowed(s) => Stream::from_static_string(s, &mut self.machine_st.arena),
+            Cow::Owned(s) => Stream::from_owned_string(s, &mut self.machine_st.arena),
+        };
 
         self.load_file(path, toplevel_stream);
 
@@ -305,15 +358,6 @@ impl Machine {
                 self.machine_st.attr_var_init.verify_attrs_loc = code_index.local().unwrap();
             }
         }
-    }
-
-    pub fn set_user_input(&mut self, input: String) {
-        self.user_input = Stream::from_owned_string(input, &mut self.machine_st.arena);
-    }
-
-    pub fn get_user_output(&self) -> String {
-        let output_bytes: Vec<_> = self.user_output.bytes().map(|b| b.unwrap()).collect();
-        String::from_utf8(output_bytes).unwrap()
     }
 
     pub(crate) fn configure_modules(&mut self) {
@@ -446,138 +490,16 @@ impl Machine {
         }
     }
 
-    #[allow(clippy::new_without_default)]
-    pub fn new(config: MachineConfig) -> Self {
-        use ref_thread_local::RefThreadLocal;
-
-        let args = MachineArgs::new();
-        let mut machine_st = MachineState::new();
-
-        let (user_input, user_output, user_error) = match config.streams {
-            config::StreamConfig::Stdio => (
-                Stream::stdin(&mut machine_st.arena, args.add_history),
-                Stream::stdout(&mut machine_st.arena),
-                Stream::stderr(&mut machine_st.arena),
-            ),
-            config::StreamConfig::Memory => (
-                Stream::Null(StreamOptions::default()),
-                Stream::from_owned_string("".to_owned(), &mut machine_st.arena),
-                Stream::stderr(&mut machine_st.arena),
-            ),
-        };
-
-        let mut wam = Machine {
-            machine_st,
-            indices: IndexStore::new(),
-            code: vec![],
-            user_input,
-            user_output,
-            user_error,
-            load_contexts: vec![],
-            #[cfg(feature = "ffi")]
-            foreign_function_table: Default::default(),
-            rng: StdRng::from_entropy(),
-        };
-
-        let mut lib_path = current_dir();
-
-        lib_path.pop();
-        lib_path.push("lib");
-
-        wam.add_impls_to_indices();
-
-        bootstrapping_compile(
-            Stream::from_static_string(
-                LIBRARIES.borrow()["ops_and_meta_predicates"],
-                &mut wam.machine_st.arena,
-            ),
-            &mut wam,
-            ListingSource::from_file_and_path(
-                atom!("ops_and_meta_predicates.pl"),
-                lib_path.clone(),
-            ),
-        )
-        .unwrap();
-
-        bootstrapping_compile(
-            Stream::from_static_string(LIBRARIES.borrow()["builtins"], &mut wam.machine_st.arena),
-            &mut wam,
-            ListingSource::from_file_and_path(atom!("builtins.pl"), lib_path.clone()),
-        )
-        .unwrap();
-
-        if let Some(builtins) = wam.indices.modules.get_mut(&atom!("builtins")) {
-            load_module(
-                &mut wam.machine_st,
-                &mut wam.indices.code_dir,
-                &mut wam.indices.op_dir,
-                &mut wam.indices.meta_predicates,
-                &CompilationTarget::User,
-                builtins,
-            );
-
-            import_builtin_impls(&wam.indices.code_dir, builtins);
-        } else {
-            unreachable!()
-        }
-
-        lib_path.pop(); // remove the "lib" at the end
-
-        bootstrapping_compile(
-            Stream::from_static_string(include_str!("../loader.pl"), &mut wam.machine_st.arena),
-            &mut wam,
-            ListingSource::from_file_and_path(atom!("loader.pl"), lib_path.clone()),
-        )
-        .unwrap();
-
-        wam.configure_modules();
-
-        if let Some(loader) = wam.indices.modules.get(&atom!("loader")) {
-            load_module(
-                &mut wam.machine_st,
-                &mut wam.indices.code_dir,
-                &mut wam.indices.op_dir,
-                &mut wam.indices.meta_predicates,
-                &CompilationTarget::User,
-                loader,
-            );
-        } else {
-            unreachable!()
-        }
-
-        wam.load_special_forms();
-        wam.load_top_level(config.toplevel);
-        wam.configure_streams();
-
-        wam
-    }
-
+    /// Ensures that [`Machine::indices`] properly reflects
+    /// the streams stored in [`Machine::user_input`], [`Machine::user_output`]
+    /// and [`Machine::user_error`].
     pub(crate) fn configure_streams(&mut self) {
-        self.user_input
-            .options_mut()
-            .set_alias_to_atom_opt(Some(atom!("user_input")));
-
         self.indices
-            .stream_aliases
-            .insert(atom!("user_input"), self.user_input);
-
-        self.indices.streams.insert(self.user_input);
-
-        self.user_output
-            .options_mut()
-            .set_alias_to_atom_opt(Some(atom!("user_output")));
-
+            .set_stream(atom!("user_input"), self.user_input);
         self.indices
-            .stream_aliases
-            .insert(atom!("user_output"), self.user_output);
-
-        self.indices.streams.insert(self.user_output);
-
+            .set_stream(atom!("user_output"), self.user_output);
         self.indices
-            .stream_aliases
-            .insert(atom!("user_error"), self.user_error);
-
-        self.indices.streams.insert(self.user_error);
+            .set_stream(atom!("user_error"), self.user_error);
     }
 
     #[inline(always)]
@@ -1235,33 +1157,25 @@ impl Machine {
 
     #[inline(always)]
     fn run_cleaners(&mut self) -> bool {
-        use std::sync::Once;
+        static CLEANER_INIT: OnceLock<(usize, usize)> = OnceLock::new();
 
-        static CLEANER_INIT: Once = Once::new();
+        let (r_c_w_h, r_c_wo_h) = *CLEANER_INIT.get_or_init(|| {
+            let r_c_w_h_atom = atom!("run_cleaners_with_handling");
+            let r_c_wo_h_atom = atom!("run_cleaners_without_handling");
+            let iso_ext = atom!("iso_ext");
 
-        static mut RCWH: usize = 0;
-        static mut RCWOH: usize = 0;
-
-        let (r_c_w_h, r_c_wo_h) = unsafe {
-            CLEANER_INIT.call_once(|| {
-                let r_c_w_h_atom = atom!("run_cleaners_with_handling");
-                let r_c_wo_h_atom = atom!("run_cleaners_without_handling");
-                let iso_ext = atom!("iso_ext");
-
-                RCWH = self
-                    .indices
-                    .get_predicate_code_index(r_c_w_h_atom, 0, iso_ext)
-                    .and_then(|item| item.local())
-                    .unwrap();
-                RCWOH = self
-                    .indices
-                    .get_predicate_code_index(r_c_wo_h_atom, 1, iso_ext)
-                    .and_then(|item| item.local())
-                    .unwrap();
-            });
-
-            (RCWH, RCWOH)
-        };
+            let r_c_w_h = self
+                .indices
+                .get_predicate_code_index(r_c_w_h_atom, 0, iso_ext)
+                .and_then(|item| item.local())
+                .unwrap();
+            let r_c_wo_h = self
+                .indices
+                .get_predicate_code_index(r_c_wo_h_atom, 1, iso_ext)
+                .and_then(|item| item.local())
+                .unwrap();
+            (r_c_w_h, r_c_wo_h)
+        });
 
         if let Some(&(_, b_cutoff, prev_block)) = self.machine_st.cont_pts.last() {
             if self.machine_st.b < b_cutoff {
@@ -1339,5 +1253,26 @@ impl Machine {
                 TrailEntryTag::TrailedAttachedValue => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::config::*;
+    use super::*;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_module_predicate_throw() {
+        let mut machine = MachineBuilder::default()
+            .with_toplevel(
+                r#"
+                    :- module('$toplevel', []).
+                    repl :- throw(kaboom).
+                "#,
+            )
+            .build();
+
+        machine.run_module_predicate(atom!("$toplevel"), (atom!("repl"), 0));
     }
 }

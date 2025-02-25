@@ -109,7 +109,7 @@ pub(crate) fn as_partial_string(
                 tail_ref = succ;
             }
             Term::PartialString(_, pstr, tail) => {
-                string += &pstr;
+                string += pstr;
                 tail_ref = tail;
             }
             Term::CompleteString(_, cstr) => {
@@ -150,6 +150,7 @@ pub fn get_op_desc(name: Atom, op_dir: &CompositeOpDir) -> Option<CompositeOpDes
             op_desc.pre = pri as usize;
             op_desc.spec |= spec as u32;
         } else if name == atom!("-") {
+            // used to denote a negative sign that should be treated as an atom and not an operator
             op_desc.spec |= NEGATIVE_SIGN;
         }
     }
@@ -177,31 +178,6 @@ pub fn get_op_desc(name: Atom, op_dir: &CompositeOpDir) -> Option<CompositeOpDes
     } else {
         Some(op_desc)
     }
-}
-
-pub fn get_clause_spec(name: Atom, arity: usize, op_dir: &CompositeOpDir) -> Option<OpDesc> {
-    match arity {
-        1 => {
-            /* This is a clause with an operator principal functor. Prefix operators
-            are supposed over post.
-             */
-            if let Some(cell) = op_dir.get(name, Fixity::Pre) {
-                return Some(cell);
-            }
-
-            if let Some(cell) = op_dir.get(name, Fixity::Post) {
-                return Some(cell);
-            }
-        }
-        2 => {
-            if let Some(cell) = op_dir.get(name, Fixity::In) {
-                return Some(cell);
-            }
-        }
-        _ => {}
-    };
-
-    None
 }
 
 fn affirm_xfx(priority: usize, d2: TokenDesc, d3: TokenDesc, d1: TokenDesc) -> bool {
@@ -340,16 +316,6 @@ impl<'a, R: CharRead> Parser<'a, R> {
         }
     }
 
-    #[inline]
-    pub fn line_num(&self) -> usize {
-        self.lexer.line_num
-    }
-
-    #[inline]
-    pub fn col_num(&self) -> usize {
-        self.lexer.col_num
-    }
-
     fn get_term_name(&mut self, td: TokenDesc) -> Option<Atom> {
         match td.tt {
             TokenType::HeadTailSeparator => Some(atom!("|")),
@@ -384,10 +350,10 @@ impl<'a, R: CharRead> Parser<'a, R> {
         }
     }
 
-    fn push_unary_op(&mut self, td: TokenDesc, spec: Specifier, assoc: u32) {
+    fn push_unary_op(&mut self, td: TokenDesc, spec: Specifier, assoc: OpDeclSpec) {
         if let Some(mut arg1) = self.terms.pop() {
             if let Some(mut name) = self.terms.pop() {
-                if is_postfix!(assoc) {
+                if assoc.is_postfix() {
                     mem::swap(&mut arg1, &mut name);
                 }
 
@@ -693,7 +659,7 @@ impl<'a, R: CharRead> Parser<'a, R> {
                 // expect a term or non-comma operator.
                 if let TokenType::Comma = desc.tt {
                     return None;
-                } else if is_term!(desc.spec) || is_op!(desc.spec) {
+                } else if is_term!(desc.spec) || is_op!(desc.spec) || is_negate!(desc.spec) {
                     arity += 1;
                 } else {
                     return None;
@@ -911,10 +877,11 @@ impl<'a, R: CharRead> Parser<'a, R> {
                         // can't be prefix, so either inf == 0
                         // or post == 0.
                         self.reduce_op(inf + post);
-
-                        // let fixity = if inf > 0 { Fixity::In } else { Fixity::Post };
-
-                        self.promote_atom_op(name, inf + post, spec & (XFX | XFY | YFX | YF | XF));
+                        self.promote_atom_op(
+                            name,
+                            inf + post,
+                            spec & (XFX as u32 | XFY as u32 | YFX as u32 | YF as u32 | XF as u32),
+                        );
                     }
                     _ => {
                         self.reduce_op(inf + post);
@@ -925,14 +892,22 @@ impl<'a, R: CharRead> Parser<'a, R> {
                                 self.promote_atom_op(
                                     name,
                                     inf + post,
-                                    spec & (XFX | XFY | YFX | XF | YF),
+                                    spec & (XFX as u32
+                                        | XFY as u32
+                                        | YFX as u32
+                                        | XF as u32
+                                        | YF as u32),
                                 );
-                            } else {
-                                self.promote_atom_op(name, pre, spec & (FX | FY | NEGATIVE_SIGN));
+
+                                return Ok(true);
                             }
-                        } else {
-                            self.promote_atom_op(name, pre, spec & (FX | FY | NEGATIVE_SIGN));
                         }
+
+                        self.promote_atom_op(
+                            name,
+                            pre,
+                            spec & (FX as u32 | FY as u32 | NEGATIVE_SIGN),
+                        );
                     }
                 }
             } else {
@@ -1068,7 +1043,7 @@ impl<'a, R: CharRead> Parser<'a, R> {
             }
             Token::Comma => {
                 self.reduce_op(1000);
-                self.shift(Token::Comma, 1000, XFY);
+                self.shift(Token::Comma, 1000, XFY as u32);
             }
             Token::End => match self.stack.last().map(|t| t.tt) {
                 Some(TokenType::Open)

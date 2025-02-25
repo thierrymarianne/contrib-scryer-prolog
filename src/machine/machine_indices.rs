@@ -1,3 +1,5 @@
+#![allow(clippy::new_without_default)] // annotating structs annotated with #[bitfield] doesn't work
+
 use crate::parser::ast::*;
 
 use crate::arena::*;
@@ -5,8 +7,9 @@ use crate::atom_table::*;
 use crate::forms::*;
 use crate::machine::loader::*;
 use crate::machine::machine_state::*;
-use crate::machine::streams::Stream;
+use crate::machine::streams::{Stream, StreamOptions};
 use crate::machine::ClauseType;
+use crate::machine::MachineStubGen;
 
 use fxhash::FxBuildHasher;
 use indexmap::{IndexMap, IndexSet};
@@ -18,8 +21,6 @@ use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
 
 use crate::types::*;
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct OrderedOpDirKey(pub(crate) Atom, pub(crate) Fixity);
 
 // 7.2
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -159,13 +160,6 @@ impl From<CodeIndex> for UntypedArenaPtr {
     }
 }
 
-impl From<UntypedArenaPtr> for CodeIndex {
-    #[inline(always)]
-    fn from(ptr: UntypedArenaPtr) -> CodeIndex {
-        CodeIndex(TypedArenaPtr::new(ptr.get_ptr() as *mut IndexPtr))
-    }
-}
-
 impl From<TypedArenaPtr<IndexPtr>> for CodeIndex {
     #[inline(always)]
     fn from(ptr: TypedArenaPtr<IndexPtr>) -> CodeIndex {
@@ -268,8 +262,8 @@ pub struct IndexStore {
     pub(super) meta_predicates: MetaPredicateDir,
     pub(super) modules: ModuleDir,
     pub(super) op_dir: OpDir,
-    pub(super) streams: StreamDir,
-    pub(super) stream_aliases: StreamAliasDir,
+    streams: StreamDir,
+    stream_aliases: StreamAliasDir,
 }
 
 impl IndexStore {
@@ -287,8 +281,27 @@ impl IndexStore {
     }
 
     #[inline(always)]
-    pub(crate) fn goal_expansion_defined(&self, key: PredicateKey) -> bool {
-        self.goal_expansion_indices.contains(&key)
+    pub(crate) fn goal_expansion_defined(&self, key: PredicateKey, module_name: Atom) -> bool {
+        let compilation_target = match module_name {
+            atom!("user") => CompilationTarget::User,
+            _ => CompilationTarget::Module(module_name),
+        };
+
+        match key {
+            _ if self.goal_expansion_indices.contains(&key) => true,
+            _ => self
+                .get_meta_predicate_spec(key.0, key.1, &compilation_target)
+                .map(|meta_specs| {
+                    meta_specs.iter().find(|meta_spec| {
+                        matches!(
+                            meta_spec,
+                            MetaSpec::Colon | MetaSpec::RequiresExpansionWithArgument(_)
+                        )
+                    })
+                })
+                .map(|meta_spec_opt| meta_spec_opt.is_some())
+                .unwrap_or(false),
+        }
     }
 
     pub(crate) fn get_predicate_skeleton_mut(
@@ -385,10 +398,10 @@ impl IndexStore {
         key: &PredicateKey,
     ) -> Option<PredicateSkeleton> {
         match compilation_target {
-            CompilationTarget::User => self.extensible_predicates.remove(key),
+            CompilationTarget::User => self.extensible_predicates.swap_remove(key),
             CompilationTarget::Module(ref module_name) => {
                 if let Some(module) = self.modules.get_mut(module_name) {
-                    module.extensible_predicates.remove(key)
+                    module.extensible_predicates.swap_remove(key)
                 } else {
                     None
                 }
@@ -447,6 +460,113 @@ impl IndexStore {
         }
     }
 
+    pub(crate) fn add_stream(
+        &mut self,
+        stream: Stream,
+        stub_name: Atom,
+        stub_arity: usize,
+    ) -> Result<(), MachineStubGen> {
+        if let Some(alias) = stream.options().get_alias() {
+            if self.stream_aliases.contains_key(&alias) {
+                return Err(Box::new(move |machine_st| {
+                    machine_st.occupied_alias_permission_error(alias, stub_name, stub_arity)
+                }));
+            }
+
+            self.stream_aliases.insert(alias, stream);
+        }
+
+        self.streams.insert(stream);
+
+        Ok(())
+    }
+
+    pub(crate) fn remove_stream(&mut self, stream: Stream) {
+        if let Some(alias) = stream.options().get_alias() {
+            debug_assert_eq!(self.stream_aliases.get(&alias), Some(&stream));
+            assert!(!is_protected_alias(alias));
+
+            self.stream_aliases.swap_remove(&alias);
+        }
+        self.streams.remove(&stream);
+    }
+
+    pub(crate) fn update_stream_options<F: Fn(&mut StreamOptions)>(
+        &mut self,
+        mut stream: Stream,
+        callback: F,
+    ) {
+        if let Some(prev_alias) = stream.options().get_alias() {
+            debug_assert_eq!(self.stream_aliases.get(&prev_alias), Some(&stream));
+        }
+        let options = stream.options_mut();
+        let prev_alias = options.get_alias();
+
+        callback(options);
+
+        if options.get_alias() != prev_alias {
+            if prev_alias.map(is_protected_alias).unwrap_or(false)
+                || options
+                    .get_alias()
+                    .map(|alias| self.has_stream(alias))
+                    .unwrap_or(false)
+            {
+                // user_input, user_output and user_error cannot be realiased,
+                // and realiasing cannot shadow an existing stream.
+                options.set_alias_to_atom_opt(prev_alias);
+                return;
+            }
+
+            if let Some(prev_alias) = prev_alias {
+                self.stream_aliases.swap_remove(&prev_alias);
+            }
+            if let Some(new_alias) = options.get_alias() {
+                self.stream_aliases.insert(new_alias, stream);
+            }
+        }
+    }
+
+    pub(crate) fn has_stream(&self, alias: Atom) -> bool {
+        self.stream_aliases.contains_key(&alias)
+    }
+
+    /// ## Warning
+    ///
+    /// The returned stream's options should only be modified through
+    /// [`IndexStore::update_stream_options`], to avoid breaking the
+    /// invariants of [`IndexStore`].
+    pub(crate) fn get_stream(&self, alias: Atom) -> Option<Stream> {
+        self.stream_aliases.get(&alias).copied()
+    }
+
+    pub(crate) fn iter_streams<'a, R: std::ops::RangeBounds<Stream>>(
+        &'a self,
+        range: R,
+    ) -> impl Iterator<Item = Stream> + 'a {
+        self.streams.range(range).into_iter().copied()
+    }
+
+    /// Forcibly sets `alias` to `stream`.
+    /// If there was a previous stream with that alias, it will lose that alias.
+    ///
+    /// Consider using [`add_stream`](Self::add_stream) if you wish to instead
+    /// return an error when stream aliases conflict.
+    pub(crate) fn set_stream(&mut self, alias: Atom, mut stream: Stream) {
+        if let Some(mut prev_stream) = self.get_stream(alias) {
+            if prev_stream == stream {
+                // Nothing to do, as the stream is already present
+                return;
+            }
+
+            prev_stream.options_mut().set_alias_to_atom_opt(None);
+        }
+
+        stream.options_mut().set_alias_to_atom_opt(Some(alias));
+
+        self.stream_aliases.insert(alias, stream);
+        self.streams.insert(stream);
+    }
+
     #[inline]
     pub(super) fn new() -> Self {
         index_store!(
@@ -455,4 +575,14 @@ impl IndexStore {
             ModuleDir::with_hasher(FxBuildHasher::default())
         )
     }
+}
+
+/// A stream is said to have a "protected" alias if modifying its
+/// alias would cause breakage in other parts of the code.
+///
+/// A stream with a protected alias cannot be realiased through
+/// [`IndexStore::update_stream_options`]. Instead, one has to use
+/// [`IndexStore::set_stream`] to do so.
+fn is_protected_alias(alias: Atom) -> bool {
+    alias == atom!("user_input") || alias == atom!("user_output") || alias == atom!("user_error")
 }

@@ -1,3 +1,5 @@
+#![allow(clippy::new_without_default)] // annotating structs annotated with #[bitfield] doesn't work
+
 use crate::allocator::*;
 use crate::arena::*;
 use crate::atom_table::*;
@@ -16,7 +18,7 @@ use crate::machine::machine_errors::*;
 use dashu::base::Abs;
 use dashu::base::BitTest;
 use num_order::NumOrd;
-use ordered_float::*;
+use ordered_float::{Float, OrderedFloat};
 
 use std::cell::Cell;
 use std::cmp::{max, min, Ordering};
@@ -166,7 +168,7 @@ fn push_literal(interm: &mut Vec<ArithmeticTerm>, c: &Literal) -> Result<(), Ari
             Number::Float(OrderedFloat(std::f64::consts::PI)),
         )),
         Literal::Atom(name) if name == &atom!("epsilon") => interm.push(ArithmeticTerm::Number(
-            Number::Float(OrderedFloat(std::f64::EPSILON)),
+            Number::Float(OrderedFloat(f64::EPSILON)),
         )),
         _ => return Err(ArithmeticError::NonEvaluableFunctor(*c, 0)),
     }
@@ -352,17 +354,17 @@ impl<'a> ArithmeticEvaluator<'a> {
 }
 
 // integer division rounding function -- 9.1.3.1.
-pub(crate) fn rnd_i(n: &'_ Number, arena: &mut Arena) -> Number {
+pub(crate) fn rnd_i(n: &'_ Number, arena: &mut Arena) -> Result<Number, EvalError> {
     match n {
         &Number::Integer(i) => {
             let result = (&*i).try_into();
             if let Ok(value) = result {
-                fixnum!(Number, value, arena)
+                Ok(fixnum!(Number, value, arena))
             } else {
-                *n
+                Ok(*n)
             }
         }
-        Number::Fixnum(_) => *n,
+        Number::Fixnum(_) => Ok(*n),
         &Number::Float(f) => {
             let f = f.floor();
 
@@ -370,18 +372,23 @@ pub(crate) fn rnd_i(n: &'_ Number, arena: &mut Arena) -> Number {
             const I64_MAX_TO_F: OrderedFloat<f64> = OrderedFloat(i64::MAX as f64);
 
             if I64_MIN_TO_F <= f && f <= I64_MAX_TO_F {
-                fixnum!(Number, f.into_inner() as i64, arena)
+                Ok(fixnum!(Number, f.into_inner() as i64, arena))
             } else {
-                Number::Integer(arena_alloc!(Integer::from(f.0 as i64), arena))
+                Ok(Number::Integer(arena_alloc!(
+                    Integer::try_from(classify_float(f.0)?).unwrap_or_else(|_| {
+                        unreachable!();
+                    }),
+                    arena
+                )))
             }
         }
         Number::Rational(ref r) => {
-            let (_, floor) = (r.fract(), r.floor());
+            let floor = r.floor();
 
             if let Ok(value) = (&floor).try_into() {
-                fixnum!(Number, value, arena)
+                Ok(fixnum!(Number, value, arena))
             } else {
-                Number::Integer(arena_alloc!(floor, arena))
+                Ok(Number::Integer(arena_alloc!(floor, arena)))
             }
         }
     }
@@ -545,26 +552,8 @@ impl PartialEq for Number {
             (&Number::Float(n1), Number::Integer(ref n2)) => {
                 n1.eq(&OrderedFloat(n2.to_f64().value()))
             }
-            (Number::Integer(ref n1), Number::Rational(ref n2)) => {
-                #[cfg(feature = "num")]
-                {
-                    &Rational::from(&**n1) == &**n2
-                }
-                #[cfg(not(feature = "num"))]
-                {
-                    n1.num_eq(&**n2)
-                }
-            }
-            (Number::Rational(ref n1), Number::Integer(ref n2)) => {
-                #[cfg(feature = "num")]
-                {
-                    n1 == &Rational::from(&**n2)
-                }
-                #[cfg(not(feature = "num"))]
-                {
-                    n1.num_eq(&**n2)
-                }
-            }
+            (Number::Integer(ref n1), Number::Rational(ref n2)) => n1.num_eq(&**n2),
+            (Number::Rational(ref n1), Number::Integer(ref n2)) => n1.num_eq(&**n2),
             (Number::Rational(ref n1), &Number::Float(n2)) => {
                 OrderedFloat(n1.to_f64().value()).eq(&n2)
             }
@@ -643,24 +632,10 @@ impl Ord for Number {
                 n1.cmp(&OrderedFloat(n2.to_f64().value()))
             }
             (&Number::Integer(n1), &Number::Rational(n2)) => {
-                #[cfg(feature = "num")]
-                {
-                    Rational::from(&**n1).cmp(n2)
-                }
-                #[cfg(not(feature = "num"))]
-                {
-                    (*n1).num_partial_cmp(&*n2).unwrap_or(Ordering::Less)
-                }
+                (*n1).num_partial_cmp(&*n2).unwrap_or(Ordering::Less)
             }
             (&Number::Rational(n1), &Number::Integer(n2)) => {
-                #[cfg(feature = "num")]
-                {
-                    (&**n1).cmp(&Rational::from(&**n2))
-                }
-                #[cfg(not(feature = "num"))]
-                {
-                    (*n1).num_partial_cmp(&*n2).unwrap_or(Ordering::Less)
-                }
+                (*n1).num_partial_cmp(&*n2).unwrap_or(Ordering::Less)
             }
             (&Number::Rational(n1), &Number::Float(n2)) => {
                 OrderedFloat(n1.to_f64().value()).cmp(&n2)

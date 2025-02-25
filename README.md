@@ -1,4 +1,3 @@
-
 # Scryer Prolog
 
 Scryer Prolog aims to become to ISO Prolog what GHC is to Haskell: an open
@@ -113,12 +112,12 @@ strings.
 Precompiled binaries for several platforms are available for download
 at:
 
-**https://github.com/mthom/scryer-prolog/releases/tag/v0.9.3**
+**https://github.com/mthom/scryer-prolog/releases/latest**
 
 ### Native Compilation
 
 First, install the latest stable version of
-[Rust](https://www.rust-lang.org/en-US/install.html) using your
+[Rust](https://www.rust-lang.org/tools/install) using your
 preferred method. Scryer tends to use features from newer Rust
 releases, whereas Rust packages in Linux distributions, Macports,
 etc. tend to lag behind. [rustup](http://rustup.rs) will keep your
@@ -126,9 +125,13 @@ Rust updated to the latest stable release; any existing Rust
 distribution should be uninstalled from your system before rustup is
 used.
 
-Currently the only way to install the latest version of Scryer is to
-clone directly from this git repository, and compile the system. This
-can be done as follows:
+
+> [!NOTE]
+> The minimum rust toolchain version required can be found in the [Cargo.toml](https://github.com/mthom/scryer-prolog/blob/master/Cargo.toml#L13)
+under the `package.rust-version` key.
+> The accuracy of this value is validated in CI
+
+### From a local git checkout
 
 ```
 $> git clone https://github.com/mthom/scryer-prolog
@@ -142,6 +145,32 @@ faster executable.
 After compilation, the executable `scryer-prolog` is available in the
 directory&nbsp;`target/release` and can be invoked to run the system.
 
+### Via `cargo install`
+
+#### From git
+
+```
+cargo install --locked --git https://github.com/mthom/scryer-prolog.git
+```
+
+Afterwards the `scryer-prolog` binary will be in the `$HOME/.cargo/bin` directory which is usually added to your PATH 
+during the installation of the rust toolchain.
+
+#### From Crates.io [![Crates.io Version](https://img.shields.io/crates/v/scryer-prolog)](https://crates.io/crates/scryer-prolog) ![Crates.io MSRV](https://img.shields.io/crates/msrv/scryer-prolog)
+
+> [!NOTE]
+> The lates crates.io release can be significantly behind the version available in the git repository
+> The crates.io badge in this sections title is a link to the crates.io page.
+> The msrv badge in the section title referece to the minimum rust toolchain version required to compile the latest crates.io release
+
+`scryer-prolog` is also release on crates.io and can be installed with
+
+```
+cargo install --locked scryer-prolog
+```
+
+### Caveats for Windows
+
 On Windows, Scryer Prolog is easier to build inside a [MSYS2](https://www.msys2.org/)
 environment as some crates may require native C compilation. However,
 the resulting binary does not need MSYS2 to run. When executing Scryer in a shell, it is recommended to use a more advanced shell than mintty (the default MSYS2 shell). The [Windows Terminal](https://github.com/microsoft/terminal) works correctly.
@@ -152,8 +181,6 @@ candle.exe scryer-prolog.wxs
 light.exe scryer-prolog.wixobj
 ```
 It will generate a very basic MSI file which installs the main executable and a shortcut in the Start Menu. It can be installed with a double-click. To uninstall, go to the Control Panel and uninstall as usual.
-
-Scryer Prolog must be built with **Rust 1.70 and up**.
 
 ### Building WebAssembly
 
@@ -227,6 +254,12 @@ Then a `pkg` directory will be created, containing everything you need for a web
 Then you can serve it with your favorite http server like `python -m http.server` or `npx serve`, and access the page with your browser.
 
 ### Docker Install
+
+Pre-built [Docker images are available on Docker Hub](https://hub.docker.com/r/mjt128/scryer-prolog/tags).
+The `latest` tag reflects the state on `master`, which might be unstable. 
+There are also tags for Scryer releases 0.9.2 and up. 
+Note though, that the base images are not kept up to date at the moment, 
+so be wary of security vulnerabilities (see [#2646](https://github.com/mthom/scryer-prolog/issues/2646)).
 
 First, install [Docker](https://docs.docker.com/get-docker/) on Linux,
 Windows, or Mac.
@@ -799,9 +832,9 @@ standards&nbsp;compliance and warranty.
 
 Successful existing applications of Scryer Prolog include the
 [DocLog](https://github.com/aarroyoc/doclog)&nbsp;system which
-generates Scryer's own documentation and homepage, [Symbolic
-Analysis of Grants](https://www.brz.gv.at/en/BRZ-Tech-Blog/Tech-Blog-7-Symbolic-Analysis-of-Grants.html)
-by the Austrian Federal Computing Center, and parts of the
+generates Scryer's own documentation and homepage, [reasoning
+about business&nbsp;grants](https://arxiv.org/abs/2406.15293)
+in the Austrian public&nbsp;administration, and parts of the
 [precautionary](https://github.com/dcnorris/precautionary/tree/main/exec/prolog)
 package for the analysis of dose-escalation trials in the
 safety-critical and highly regulated domain of oncology

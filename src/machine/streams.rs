@@ -14,6 +14,8 @@ use crate::types::*;
 
 pub use scryer_modular_bitfield::prelude::*;
 
+#[cfg(feature = "http")]
+use bytes::{buf::Reader as BufReader, Buf, Bytes};
 use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt;
@@ -21,14 +23,14 @@ use std::fmt::Debug;
 use std::fs::{File, OpenOptions};
 use std::hash::Hash;
 use std::io;
-#[cfg(feature = "http")]
-use std::io::BufRead;
 use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom, Write};
-use std::mem;
+use std::mem::ManuallyDrop;
 use std::net::{Shutdown, TcpStream};
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::ptr;
+use std::sync::mpsc::Receiver;
+use std::sync::mpsc::TryRecvError;
 
 #[cfg(feature = "tls")]
 use native_tls::TlsStream;
@@ -275,7 +277,7 @@ impl Write for NamedTlsStream {
 #[cfg(feature = "http")]
 pub struct HttpReadStream {
     url: Atom,
-    body_reader: Box<dyn BufRead>,
+    body_reader: BufReader<Bytes>,
 }
 
 #[cfg(feature = "http")]
@@ -296,9 +298,9 @@ impl Read for HttpReadStream {
 #[cfg(feature = "http")]
 pub struct HttpWriteStream {
     status_code: u16,
-    headers: mem::ManuallyDrop<hyper::HeaderMap>,
+    headers: std::mem::ManuallyDrop<hyper::HeaderMap>,
     response: TypedArenaPtr<HttpResponse>,
-    buffer: mem::ManuallyDrop<Vec<u8>>,
+    buffer: std::mem::ManuallyDrop<Vec<u8>>,
 }
 
 #[cfg(feature = "http")]
@@ -324,9 +326,12 @@ impl Write for HttpWriteStream {
 
 #[cfg(feature = "http")]
 impl HttpWriteStream {
+    // TODO why is this suddenly dead code and should it be used somewhere?
+    // Should this be impl Drop for HttpWriteStream?
+    #[allow(dead_code)]
     fn drop(&mut self) {
-        let headers = unsafe { mem::ManuallyDrop::take(&mut self.headers) };
-        let buffer = unsafe { mem::ManuallyDrop::take(&mut self.buffer) };
+        let headers = unsafe { std::mem::ManuallyDrop::take(&mut self.headers) };
+        let buffer = unsafe { std::mem::ManuallyDrop::take(&mut self.buffer) };
 
         let (ready, response, cvar) = &**self.response;
 
@@ -370,6 +375,89 @@ impl Write for StandardErrorStream {
     #[inline]
     fn flush(&mut self) -> std::io::Result<()> {
         io::stderr().flush()
+    }
+}
+
+pub type Callback = Box<dyn FnMut(&mut Cursor<Vec<u8>>)>;
+
+pub struct CallbackStream {
+    pub(crate) inner: Cursor<Vec<u8>>,
+    callback: Callback,
+}
+
+impl Debug for CallbackStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CallbackStream")
+            .field("inner", &self.inner)
+            .finish()
+    }
+}
+
+impl Write for CallbackStream {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let pos = self.inner.position();
+
+        self.inner.seek(SeekFrom::End(0))?;
+        let result = self.inner.write(buf);
+        self.inner.seek(SeekFrom::Start(pos))?;
+
+        result
+    }
+
+    #[inline]
+    fn flush(&mut self) -> std::io::Result<()> {
+        (self.callback)(&mut self.inner);
+        self.inner.flush()
+    }
+}
+
+#[derive(Debug)]
+pub struct InputChannelStream {
+    pub(crate) inner: Cursor<Vec<u8>>,
+    pub eof: bool,
+    channel: Receiver<Vec<u8>>,
+}
+
+impl Read for InputChannelStream {
+    #[inline]
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.eof {
+            return Ok(0);
+        }
+
+        let to_read = buf.len();
+        let mut total_read = 0;
+
+        loop {
+            total_read += self.inner.read(&mut buf[total_read..])?;
+
+            if total_read < to_read {
+                // We need to get more data to read
+                match self.channel.try_recv() {
+                    Ok(data) => {
+                        // Append into self.inner
+                        let pos = self.inner.position();
+                        assert_eq!(pos as usize, self.inner.get_ref().len());
+                        self.inner.write_all(&data)?;
+                        self.inner.seek(SeekFrom::Start(pos))?;
+                    }
+                    Err(TryRecvError::Empty) => {
+                        // Data is pending
+                        break;
+                    }
+                    Err(TryRecvError::Disconnected) => {
+                        // The other end of the channel was closed so we are EOF
+                        self.eof = true;
+                        break;
+                    }
+                }
+            } else {
+                assert_eq!(total_read, to_read);
+                break;
+            }
+        }
+        Ok(total_read)
     }
 }
 
@@ -452,27 +540,33 @@ impl<T> DerefMut for StreamLayout<T> {
 
 macro_rules! arena_allocated_impl_for_stream {
     ($stream_type:ty, $stream_tag:ident) => {
-        impl ArenaAllocated for StreamLayout<$stream_type> {
-            type PtrToAllocated = TypedArenaPtr<StreamLayout<$stream_type>>;
+        impl $crate::arena::AllocateInArena<$stream_tag> for StreamLayout<$stream_type> {
+            fn arena_allocate(self, arena: &mut Arena) -> TypedArenaPtr<$stream_tag> {
+                $stream_tag::alloc(arena, core::mem::ManuallyDrop::new(self))
+            }
+        }
+
+        impl ArenaAllocated for $stream_tag {
+            type Payload = core::mem::ManuallyDrop<StreamLayout<$stream_type>>;
 
             #[inline]
             fn tag() -> ArenaHeaderTag {
                 ArenaHeaderTag::$stream_tag
             }
 
-            #[inline]
-            fn size(&self) -> usize {
-                mem::size_of::<StreamLayout<$stream_type>>()
-            }
+            unsafe fn dealloc(ptr: std::ptr::NonNull<TypedAllocSlab<Self>>) {
+                let mut slab = unsafe { Box::from_raw(ptr.as_ptr()) };
 
-            #[allow(clippy::not_unsafe_ptr_arg_deref)]
-            #[inline]
-            fn copy_to_arena(self, dst: *mut Self) -> Self::PtrToAllocated {
-                unsafe {
-                    // Miri seems to hit this a lot
-                    ptr::write(dst, self);
-                    TypedArenaPtr::new(dst as *mut Self)
+                match slab.tag() {
+                    ArenaHeaderTag::$stream_tag => {
+                        unsafe { std::mem::ManuallyDrop::drop(slab.payload()) };
+                    }
+                    ArenaHeaderTag::Dropped => {}
+                    _ => {
+                        unreachable!()
+                    }
                 }
+                drop(slab);
             }
         }
     };
@@ -492,39 +586,38 @@ arena_allocated_impl_for_stream!(ReadlineStream, ReadlineStream);
 arena_allocated_impl_for_stream!(StaticStringStream, StaticStringStream);
 arena_allocated_impl_for_stream!(StandardOutputStream, StandardOutputStream);
 arena_allocated_impl_for_stream!(StandardErrorStream, StandardErrorStream);
+arena_allocated_impl_for_stream!(CharReader<CallbackStream>, CallbackStream);
+arena_allocated_impl_for_stream!(CharReader<InputChannelStream>, InputChannelStream);
 
 #[derive(Debug, Copy, Clone)]
 pub enum Stream {
-    Byte(TypedArenaPtr<StreamLayout<CharReader<ByteStream>>>),
-    InputFile(TypedArenaPtr<StreamLayout<CharReader<InputFileStream>>>),
-    OutputFile(TypedArenaPtr<StreamLayout<OutputFileStream>>),
-    StaticString(TypedArenaPtr<StreamLayout<StaticStringStream>>),
-    NamedTcp(TypedArenaPtr<StreamLayout<CharReader<NamedTcpStream>>>),
+    Byte(TypedArenaPtr<ByteStream>),
+    InputFile(TypedArenaPtr<InputFileStream>),
+    OutputFile(TypedArenaPtr<OutputFileStream>),
+    StaticString(TypedArenaPtr<StaticStringStream>),
+    NamedTcp(TypedArenaPtr<NamedTcpStream>),
     #[cfg(feature = "tls")]
-    NamedTls(TypedArenaPtr<StreamLayout<CharReader<NamedTlsStream>>>),
+    NamedTls(TypedArenaPtr<NamedTlsStream>),
     #[cfg(feature = "http")]
-    HttpRead(TypedArenaPtr<StreamLayout<CharReader<HttpReadStream>>>),
+    HttpRead(TypedArenaPtr<HttpReadStream>),
     #[cfg(feature = "http")]
-    HttpWrite(TypedArenaPtr<StreamLayout<CharReader<HttpWriteStream>>>),
+    HttpWrite(TypedArenaPtr<HttpWriteStream>),
     Null(StreamOptions),
-    Readline(TypedArenaPtr<StreamLayout<ReadlineStream>>),
-    StandardOutput(TypedArenaPtr<StreamLayout<StandardOutputStream>>),
-    StandardError(TypedArenaPtr<StreamLayout<StandardErrorStream>>),
+    Readline(TypedArenaPtr<ReadlineStream>),
+    StandardOutput(TypedArenaPtr<StandardOutputStream>),
+    StandardError(TypedArenaPtr<StandardErrorStream>),
+    Callback(TypedArenaPtr<CallbackStream>),
+    InputChannel(TypedArenaPtr<InputChannelStream>),
 }
 
-impl From<TypedArenaPtr<StreamLayout<ReadlineStream>>> for Stream {
+impl From<TypedArenaPtr<ReadlineStream>> for Stream {
     #[inline]
-    fn from(stream: TypedArenaPtr<StreamLayout<ReadlineStream>>) -> Stream {
+    fn from(stream: TypedArenaPtr<ReadlineStream>) -> Stream {
         Stream::Readline(stream)
     }
 }
 
 impl Stream {
-    #[inline]
-    pub fn from_readline_stream(stream: ReadlineStream, arena: &mut Arena) -> Stream {
-        Stream::Readline(arena_alloc!(StreamLayout::new(stream), arena))
-    }
-
     #[inline]
     pub fn from_owned_string(string: String, arena: &mut Arena) -> Stream {
         Stream::Byte(arena_alloc!(
@@ -546,6 +639,19 @@ impl Stream {
     }
 
     #[inline]
+    pub fn input_channel(channel: Receiver<Vec<u8>>, arena: &mut Arena) -> Stream {
+        let inner = Cursor::new(Vec::new());
+        Stream::InputChannel(arena_alloc!(
+            StreamLayout::new(CharReader::new(InputChannelStream {
+                inner,
+                eof: false,
+                channel
+            })),
+            arena
+        ))
+    }
+
+    #[inline]
     pub fn stdin(arena: &mut Arena, add_history: bool) -> Stream {
         Stream::Readline(arena_alloc!(
             StreamLayout::new(ReadlineStream::new("", add_history)),
@@ -553,32 +659,34 @@ impl Stream {
         ))
     }
 
-    pub fn from_tag(tag: ArenaHeaderTag, ptr: *const u8) -> Self {
+    pub fn from_tag(tag: ArenaHeaderTag, ptr: UntypedArenaPtr) -> Self {
         match tag {
-            ArenaHeaderTag::ByteStream => Stream::Byte(TypedArenaPtr::new(ptr as *mut _)),
-            ArenaHeaderTag::InputFileStream => Stream::InputFile(TypedArenaPtr::new(ptr as *mut _)),
-            ArenaHeaderTag::OutputFileStream => {
-                Stream::OutputFile(TypedArenaPtr::new(ptr as *mut _))
-            }
-            ArenaHeaderTag::NamedTcpStream => Stream::NamedTcp(TypedArenaPtr::new(ptr as *mut _)),
+            ArenaHeaderTag::ByteStream => Stream::Byte(unsafe { ptr.as_typed_ptr() }),
+            ArenaHeaderTag::InputFileStream => Stream::InputFile(unsafe { ptr.as_typed_ptr() }),
+            ArenaHeaderTag::OutputFileStream => Stream::OutputFile(unsafe { ptr.as_typed_ptr() }),
+            ArenaHeaderTag::NamedTcpStream => Stream::NamedTcp(unsafe { ptr.as_typed_ptr() }),
             #[cfg(feature = "tls")]
-            ArenaHeaderTag::NamedTlsStream => Stream::NamedTls(TypedArenaPtr::new(ptr as *mut _)),
+            ArenaHeaderTag::NamedTlsStream => Stream::NamedTls(unsafe { ptr.as_typed_ptr() }),
             #[cfg(feature = "http")]
-            ArenaHeaderTag::HttpReadStream => Stream::HttpRead(TypedArenaPtr::new(ptr as *mut _)),
+            ArenaHeaderTag::HttpReadStream => Stream::HttpRead(unsafe { ptr.as_typed_ptr() }),
             #[cfg(feature = "http")]
-            ArenaHeaderTag::HttpWriteStream => Stream::HttpWrite(TypedArenaPtr::new(ptr as *mut _)),
-            ArenaHeaderTag::ReadlineStream => Stream::Readline(TypedArenaPtr::new(ptr as *mut _)),
+            ArenaHeaderTag::HttpWriteStream => Stream::HttpWrite(unsafe { ptr.as_typed_ptr() }),
+            ArenaHeaderTag::ReadlineStream => Stream::Readline(unsafe { ptr.as_typed_ptr() }),
             ArenaHeaderTag::StaticStringStream => {
-                Stream::StaticString(TypedArenaPtr::new(ptr as *mut _))
+                Stream::StaticString(unsafe { ptr.as_typed_ptr() })
             }
             ArenaHeaderTag::StandardOutputStream => {
-                Stream::StandardOutput(TypedArenaPtr::new(ptr as *mut _))
+                Stream::StandardOutput(unsafe { ptr.as_typed_ptr() })
             }
             ArenaHeaderTag::StandardErrorStream => {
-                Stream::StandardError(TypedArenaPtr::new(ptr as *mut _))
+                Stream::StandardError(unsafe { ptr.as_typed_ptr() })
             }
             ArenaHeaderTag::Dropped | ArenaHeaderTag::NullStream => {
                 Stream::Null(StreamOptions::default())
+            }
+            ArenaHeaderTag::CallbackStream => Stream::Callback(unsafe { ptr.as_typed_ptr() }),
+            ArenaHeaderTag::InputChannelStream => {
+                Stream::InputChannel(unsafe { ptr.as_typed_ptr() })
             }
             _ => unreachable!(),
         }
@@ -616,6 +724,8 @@ impl Stream {
             Stream::Readline(ptr) => ptr.header_ptr(),
             Stream::StandardOutput(ptr) => ptr.header_ptr(),
             Stream::StandardError(ptr) => ptr.header_ptr(),
+            Stream::Callback(ptr) => ptr.header_ptr(),
+            Stream::InputChannel(ptr) => ptr.header_ptr(),
         }
     }
 
@@ -636,10 +746,12 @@ impl Stream {
             Stream::Readline(ref ptr) => &ptr.options,
             Stream::StandardOutput(ref ptr) => &ptr.options,
             Stream::StandardError(ref ptr) => &ptr.options,
+            Stream::Callback(ref ptr) => &ptr.options,
+            Stream::InputChannel(ref ptr) => &ptr.options,
         }
     }
 
-    pub fn options_mut(&mut self) -> &mut StreamOptions {
+    pub(super) fn options_mut(&mut self) -> &mut StreamOptions {
         match self {
             Stream::Byte(ref mut ptr) => &mut ptr.options,
             Stream::InputFile(ref mut ptr) => &mut ptr.options,
@@ -656,6 +768,8 @@ impl Stream {
             Stream::Readline(ref mut ptr) => &mut ptr.options,
             Stream::StandardOutput(ref mut ptr) => &mut ptr.options,
             Stream::StandardError(ref mut ptr) => &mut ptr.options,
+            Stream::Callback(ref mut ptr) => &mut ptr.options,
+            Stream::InputChannel(ref mut ptr) => &mut ptr.options,
         }
     }
 
@@ -677,6 +791,8 @@ impl Stream {
             Stream::Readline(ptr) => ptr.lines_read += incr_num_lines_read,
             Stream::StandardOutput(ptr) => ptr.lines_read += incr_num_lines_read,
             Stream::StandardError(ptr) => ptr.lines_read += incr_num_lines_read,
+            Stream::Callback(ptr) => ptr.lines_read += incr_num_lines_read,
+            Stream::InputChannel(ptr) => ptr.lines_read += incr_num_lines_read,
         }
     }
 
@@ -698,6 +814,8 @@ impl Stream {
             Stream::Readline(ptr) => ptr.lines_read = value,
             Stream::StandardOutput(ptr) => ptr.lines_read = value,
             Stream::StandardError(ptr) => ptr.lines_read = value,
+            Stream::Callback(ptr) => ptr.lines_read = value,
+            Stream::InputChannel(ptr) => ptr.lines_read = value,
         }
     }
 
@@ -719,6 +837,8 @@ impl Stream {
             Stream::Readline(ptr) => ptr.lines_read,
             Stream::StandardOutput(ptr) => ptr.lines_read,
             Stream::StandardError(ptr) => ptr.lines_read,
+            Stream::Callback(ptr) => ptr.lines_read,
+            Stream::InputChannel(ptr) => ptr.lines_read,
         }
     }
 }
@@ -735,6 +855,7 @@ impl CharRead for Stream {
             Stream::Readline(rl_stream) => (*rl_stream).peek_char(),
             Stream::StaticString(src) => (*src).peek_char(),
             Stream::Byte(cursor) => (*cursor).peek_char(),
+            Stream::InputChannel(cursor) => (*cursor).peek_char(),
             #[cfg(feature = "http")]
             Stream::HttpWrite(_) => Some(Err(std::io::Error::new(
                 ErrorKind::PermissionDenied,
@@ -743,7 +864,8 @@ impl CharRead for Stream {
             Stream::OutputFile(_)
             | Stream::StandardError(_)
             | Stream::StandardOutput(_)
-            | Stream::Null(_) => Some(Err(std::io::Error::new(
+            | Stream::Null(_)
+            | Stream::Callback(_) => Some(Err(std::io::Error::new(
                 ErrorKind::PermissionDenied,
                 StreamError::ReadFromOutputStream,
             ))),
@@ -761,6 +883,7 @@ impl CharRead for Stream {
             Stream::Readline(rl_stream) => (*rl_stream).read_char(),
             Stream::StaticString(src) => (*src).read_char(),
             Stream::Byte(cursor) => (*cursor).read_char(),
+            Stream::InputChannel(cursor) => (*cursor).read_char(),
             #[cfg(feature = "http")]
             Stream::HttpWrite(_) => Some(Err(std::io::Error::new(
                 ErrorKind::PermissionDenied,
@@ -769,7 +892,8 @@ impl CharRead for Stream {
             Stream::OutputFile(_)
             | Stream::StandardError(_)
             | Stream::StandardOutput(_)
-            | Stream::Null(_) => Some(Err(std::io::Error::new(
+            | Stream::Null(_)
+            | Stream::Callback(_) => Some(Err(std::io::Error::new(
                 ErrorKind::PermissionDenied,
                 StreamError::ReadFromOutputStream,
             ))),
@@ -792,7 +916,9 @@ impl CharRead for Stream {
             Stream::OutputFile(_)
             | Stream::StandardError(_)
             | Stream::StandardOutput(_)
-            | Stream::Null(_) => {}
+            | Stream::Null(_)
+            | Stream::Callback(_) => {}
+            Stream::InputChannel(_) => {}
         }
     }
 
@@ -807,12 +933,14 @@ impl CharRead for Stream {
             Stream::Readline(ref mut rl_stream) => rl_stream.consume(nread),
             Stream::StaticString(ref mut src) => src.consume(nread),
             Stream::Byte(ref mut cursor) => cursor.consume(nread),
+            Stream::InputChannel(ref mut cursor) => cursor.consume(nread),
             #[cfg(feature = "http")]
             Stream::HttpWrite(_) => {}
             Stream::OutputFile(_)
             | Stream::StandardError(_)
             | Stream::StandardOutput(_)
-            | Stream::Null(_) => {}
+            | Stream::Null(_)
+            | Stream::Callback(_) => {}
         }
     }
 }
@@ -830,6 +958,7 @@ impl Read for Stream {
             Stream::Readline(rl_stream) => (*rl_stream).read(buf),
             Stream::StaticString(src) => (*src).read(buf),
             Stream::Byte(cursor) => (*cursor).read(buf),
+            Stream::InputChannel(cursor) => (*cursor).read(buf),
             #[cfg(feature = "http")]
             Stream::HttpWrite(_) => Err(std::io::Error::new(
                 ErrorKind::PermissionDenied,
@@ -838,7 +967,8 @@ impl Read for Stream {
             Stream::OutputFile(_)
             | Stream::StandardError(_)
             | Stream::StandardOutput(_)
-            | Stream::Null(_) => Err(std::io::Error::new(
+            | Stream::Null(_)
+            | Stream::Callback(_) => Err(std::io::Error::new(
                 ErrorKind::PermissionDenied,
                 StreamError::ReadFromOutputStream,
             )),
@@ -854,6 +984,7 @@ impl Write for Stream {
             #[cfg(feature = "tls")]
             Stream::NamedTls(ref mut tls_stream) => tls_stream.get_mut().write(buf),
             Stream::Byte(ref mut cursor) => cursor.get_mut().write(buf),
+            Stream::Callback(ref mut callback_stream) => callback_stream.get_mut().write(buf),
             Stream::StandardOutput(stream) => stream.write(buf),
             Stream::StandardError(stream) => stream.write(buf),
             #[cfg(feature = "http")]
@@ -864,6 +995,7 @@ impl Write for Stream {
                 StreamError::WriteToInputStream,
             )),
             Stream::StaticString(_)
+            | Stream::InputChannel(_)
             | Stream::Readline(_)
             | Stream::InputFile(..)
             | Stream::Null(_) => Err(std::io::Error::new(
@@ -880,6 +1012,7 @@ impl Write for Stream {
             #[cfg(feature = "tls")]
             Stream::NamedTls(ref mut tls_stream) => tls_stream.stream.get_mut().flush(),
             Stream::Byte(ref mut cursor) => cursor.stream.get_mut().flush(),
+            Stream::Callback(ref mut callback_stream) => callback_stream.stream.get_mut().flush(),
             Stream::StandardError(stream) => stream.stream.flush(),
             Stream::StandardOutput(stream) => stream.stream.flush(),
             #[cfg(feature = "http")]
@@ -890,6 +1023,7 @@ impl Write for Stream {
                 StreamError::FlushToInputStream,
             )),
             Stream::StaticString(_)
+            | Stream::InputChannel(_)
             | Stream::Readline(_)
             | Stream::InputFile(_)
             | Stream::Null(_) => Err(std::io::Error::new(
@@ -1009,7 +1143,7 @@ impl Stream {
                 past_end_of_stream,
                 stream,
                 ..
-            } = &mut **stream_layout;
+            } = &mut ***stream_layout;
 
             stream
                 .get_mut()
@@ -1042,6 +1176,8 @@ impl Stream {
             Stream::Readline(stream) => stream.past_end_of_stream,
             Stream::StandardOutput(stream) => stream.past_end_of_stream,
             Stream::StandardError(stream) => stream.past_end_of_stream,
+            Stream::Callback(stream) => stream.past_end_of_stream,
+            Stream::InputChannel(stream) => stream.past_end_of_stream,
         }
     }
 
@@ -1068,6 +1204,8 @@ impl Stream {
             Stream::Readline(stream) => stream.past_end_of_stream = value,
             Stream::StandardOutput(stream) => stream.past_end_of_stream = value,
             Stream::StandardError(stream) => stream.past_end_of_stream = value,
+            Stream::Callback(stream) => stream.past_end_of_stream = value,
+            Stream::InputChannel(stream) => stream.past_end_of_stream = value,
         }
     }
 
@@ -1083,7 +1221,7 @@ impl Stream {
                     past_end_of_stream,
                     stream,
                     ..
-                } = &mut **stream_layout;
+                } = &mut ***stream_layout;
 
                 let cursor_len = stream.get_ref().0.get_ref().len() as u64;
                 cursor_position(past_end_of_stream, &stream.get_ref().0, cursor_len)
@@ -1093,7 +1231,7 @@ impl Stream {
                     past_end_of_stream,
                     stream,
                     ..
-                } = &mut **stream_layout;
+                } = &mut ***stream_layout;
 
                 let cursor_len = stream.stream.get_ref().len() as u64;
                 cursor_position(past_end_of_stream, &stream.stream, cursor_len)
@@ -1105,7 +1243,7 @@ impl Stream {
                     past_end_of_stream,
                     stream,
                     ..
-                } = &mut **stream_layout;
+                } = &mut ***stream_layout;
 
                 match stream.get_ref().file.metadata() {
                     Ok(metadata) => {
@@ -1127,6 +1265,27 @@ impl Stream {
                         *past_end_of_stream = true;
                         AtEndOfStream::Past
                     }
+                }
+            }
+            #[cfg(feature = "http")]
+            Stream::HttpRead(stream_layout) => {
+                if stream_layout
+                    .stream
+                    .get_ref()
+                    .body_reader
+                    .get_ref()
+                    .has_remaining()
+                {
+                    AtEndOfStream::Not
+                } else {
+                    AtEndOfStream::Past
+                }
+            }
+            Stream::InputChannel(stream_layout) => {
+                if stream_layout.stream.get_ref().eof {
+                    AtEndOfStream::At
+                } else {
+                    AtEndOfStream::Not
                 }
             }
             _ => AtEndOfStream::Not,
@@ -1153,6 +1312,7 @@ impl Stream {
             #[cfg(feature = "tls")]
             Stream::NamedTls(..) => atom!("read_append"),
             Stream::Byte(_)
+            | Stream::InputChannel(_)
             | Stream::Readline(_)
             | Stream::StaticString(_)
             | Stream::InputFile(..) => atom!("read"),
@@ -1160,7 +1320,10 @@ impl Stream {
             Stream::OutputFile(file) if file.is_append => atom!("append"),
             #[cfg(feature = "http")]
             Stream::HttpWrite(_) => atom!("write"),
-            Stream::OutputFile(_) | Stream::StandardError(_) | Stream::StandardOutput(_) => {
+            Stream::OutputFile(_)
+            | Stream::StandardError(_)
+            | Stream::StandardOutput(_)
+            | Stream::Callback(_) => {
                 atom!("write")
             }
             Stream::Null(_) => atom!(""),
@@ -1179,6 +1342,17 @@ impl Stream {
     pub fn stderr(arena: &mut Arena) -> Self {
         Stream::StandardError(arena_alloc!(
             StreamLayout::new(StandardErrorStream {}),
+            arena
+        ))
+    }
+
+    #[inline]
+    pub fn from_callback(callback: Callback, arena: &mut Arena) -> Self {
+        Stream::Callback(arena_alloc!(
+            ManuallyDrop::new(StreamLayout::new(CharReader::new(CallbackStream {
+                inner: Cursor::new(Vec::new()),
+                callback,
+            }))),
             arena
         ))
     }
@@ -1217,7 +1391,7 @@ impl Stream {
     #[inline]
     pub(crate) fn from_http_stream(
         url: Atom,
-        http_stream: Box<dyn BufRead>,
+        http_stream: BufReader<Bytes>,
         arena: &mut Arena,
     ) -> Self {
         Stream::HttpRead(arena_alloc!(
@@ -1241,8 +1415,8 @@ impl Stream {
             StreamLayout::new(CharReader::new(HttpWriteStream {
                 response,
                 status_code,
-                headers: mem::ManuallyDrop::new(headers),
-                buffer: mem::ManuallyDrop::new(Vec::new()),
+                headers: std::mem::ManuallyDrop::new(headers),
+                buffer: std::mem::ManuallyDrop::new(Vec::new()),
             })),
             arena
         ))
@@ -1273,11 +1447,10 @@ impl Stream {
         ))
     }
 
+    /// Drops the stream handle and marks the arena pointer as [`ArenaHeaderTag::Dropped`].
     #[inline]
     pub(crate) fn close(&mut self) -> Result<(), std::io::Error> {
-        let mut stream = std::mem::replace(self, Stream::Null(StreamOptions::default()));
-
-        match stream {
+        match self {
             Stream::NamedTcp(ref mut tcp_stream) => {
                 tcp_stream.inner_mut().tcp_stream.shutdown(Shutdown::Both)
             }
@@ -1285,42 +1458,50 @@ impl Stream {
             Stream::NamedTls(ref mut tls_stream) => tls_stream.inner_mut().tls_stream.shutdown(),
             #[cfg(feature = "http")]
             Stream::HttpRead(ref mut http_stream) => {
-                unsafe {
-                    http_stream.set_tag(ArenaHeaderTag::Dropped);
-                    std::ptr::drop_in_place(&mut http_stream.inner_mut().body_reader as *mut _);
-                }
+                http_stream.drop_payload();
 
                 Ok(())
             }
             #[cfg(feature = "http")]
-            Stream::HttpWrite(ref mut http_stream) => {
-                http_stream.inner_mut().drop();
-                unsafe {
-                    http_stream.set_tag(ArenaHeaderTag::Dropped);
-                    std::ptr::drop_in_place(&mut http_stream.inner_mut().buffer as *mut _);
-                }
+            Stream::HttpWrite(mut http_stream) => {
+                http_stream.drop_payload();
 
                 Ok(())
             }
             Stream::InputFile(mut file_stream) => {
                 // close the stream by dropping the inner File.
-                unsafe {
-                    file_stream.set_tag(ArenaHeaderTag::Dropped);
-                    std::ptr::drop_in_place(&mut file_stream.inner_mut().file as *mut _);
-                }
+                file_stream.drop_payload();
 
                 Ok(())
             }
             Stream::OutputFile(mut file_stream) => {
                 // close the stream by dropping the inner File.
-                unsafe {
-                    file_stream.set_tag(ArenaHeaderTag::Dropped);
-                    std::ptr::drop_in_place(&mut file_stream.file as *mut _);
-                }
+                file_stream.drop_payload();
 
                 Ok(())
             }
-            _ => Ok(()),
+            Stream::Byte(mut stream) => {
+                stream.drop_payload();
+                Ok(())
+            }
+            Stream::Callback(mut stream) => {
+                stream.drop_payload();
+                Ok(())
+            }
+            Stream::InputChannel(mut stream) => {
+                stream.drop_payload();
+                Ok(())
+            }
+            Stream::StaticString(mut stream) => {
+                stream.drop_payload();
+                Ok(())
+            }
+
+            Stream::Null(_) => Ok(()),
+
+            Stream::Readline(_) | Stream::StandardOutput(_) | Stream::StandardError(_) => {
+                unreachable!();
+            }
         }
     }
 
@@ -1338,6 +1519,7 @@ impl Stream {
             Stream::HttpRead(..) => true,
             Stream::NamedTcp(..)
             | Stream::Byte(_)
+            | Stream::InputChannel(_)
             | Stream::Readline(_)
             | Stream::StaticString(_)
             | Stream::InputFile(..) => true,
@@ -1356,6 +1538,7 @@ impl Stream {
             | Stream::StandardOutput(_)
             | Stream::NamedTcp(..)
             | Stream::Byte(_)
+            | Stream::Callback(_)
             | Stream::OutputFile(..) => true,
             _ => false,
         }
@@ -1383,6 +1566,10 @@ impl Stream {
             }
             Stream::Readline(ref mut readline_stream) => {
                 readline_stream.reset();
+                true
+            }
+            Stream::InputChannel(ref mut input_channel_stream) => {
+                input_channel_stream.stream.get_mut().inner.set_position(0);
                 true
             }
             _ => false,
@@ -1462,6 +1649,10 @@ impl MachineState {
         }
     }
 
+    /// ## Warning
+    ///
+    /// The options of streams stored in `Machine::indices` should only
+    /// be modified through [`IndexStore::update_stream_options`].
     pub(crate) fn get_stream_options(
         &mut self,
         alias: HeapCellValue,
@@ -1577,10 +1768,23 @@ impl MachineState {
         options
     }
 
+    /// If `addr` is a [`Cons`](HeapCellValueTag::Cons) to a stream, then returns it.
+    ///
+    /// If it is an atom or a string, then this searches for the corresponding stream
+    /// inside of [`self.indices`], returning it.
+    ///
+    /// ## Warning
+    ///
+    /// **Do not directly modify [`stream.options_mut()`](Stream::options_mut)
+    /// on the returned stream.**
+    ///
+    /// Other functions rely on the invariants of [`IndexStore`], which may
+    /// become invalidated by the direct modification of a stream's option (namely,
+    /// its alias name). Instead, use [`IndexStore::update_stream_options`].
     pub(crate) fn get_stream_or_alias(
         &mut self,
         addr: HeapCellValue,
-        stream_aliases: &StreamAliasDir,
+        indices: &IndexStore,
         caller: Atom,
         arity: usize,
     ) -> Result<Stream, MachineStub> {
@@ -1590,8 +1794,8 @@ impl MachineState {
                         (HeapCellValueTag::Atom, (name, arity)) => {
                             debug_assert_eq!(arity, 0);
 
-                            return match stream_aliases.get(&name) {
-                                Some(stream) if !stream.is_null_stream() => Ok(*stream),
+                            return match indices.get_stream(name) {
+                                Some(stream) if !stream.is_null_stream() => Ok(stream),
                                 _ => {
                                     let stub = functor_stub(caller, arity);
                                     let addr = atom_as_cell!(name);
@@ -1608,8 +1812,8 @@ impl MachineState {
 
                             debug_assert_eq!(arity, 0);
 
-                            return match stream_aliases.get(&name) {
-                                Some(stream) if !stream.is_null_stream() => Ok(*stream),
+                            return match indices.get_stream(name) {
+                                Some(stream) if !stream.is_null_stream() => Ok(stream),
                                 _ => {
                                     let stub = functor_stub(caller, arity);
                                     let addr = atom_as_cell!(name);
@@ -1799,7 +2003,7 @@ impl MachineState {
 
         // 8.11.5.3l)
         if let Some(alias) = options.get_alias() {
-            if indices.stream_aliases.contains_key(&alias) {
+            if indices.has_stream(alias) {
                 return Err(self.occupied_alias_permission_error(alias, atom!("open"), 4));
             }
         }
@@ -1889,5 +2093,219 @@ impl MachineState {
                 Stream::from_file_as_output(file_spec, file, in_append_mode, &mut self.arena)
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::*;
+    use std::{cell::RefCell, io::Read, io::Write, rc::Rc};
+
+    fn succeeded(answer: Vec<Result<LeafAnswer, Term>>) -> bool {
+        // Ideally this should be a method in QueryState or LeafAnswer.
+        matches!(
+            answer[0].as_ref(),
+            Ok(LeafAnswer::True) | Ok(LeafAnswer::LeafAnswer { .. })
+        )
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn user_input_string_stream() {
+        let streams =
+            StreamConfig::default().with_user_input(InputStreamConfig::string("a(1,2,3)."));
+
+        let mut machine = MachineBuilder::default().with_streams(streams).build();
+
+        let complete_answer: Vec<_> = machine
+            .run_query(r#"current_input(_), \+ at_end_of_stream."#)
+            .collect();
+
+        assert!(succeeded(complete_answer));
+
+        let complete_answer: Vec<_> = machine.run_query("read(A).").collect();
+
+        assert_eq!(
+            complete_answer,
+            [Ok(LeafAnswer::from_bindings([(
+                "A",
+                Term::compound("a", [Term::integer(1), Term::integer(2), Term::integer(3),])
+            )]))]
+        );
+
+        let complete_answer: Vec<_> = machine.run_query(r#"at_end_of_stream."#).collect();
+
+        assert!(succeeded(complete_answer));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn user_input_channel_stream() {
+        let (mut user_input, channel_stream) = InputStreamConfig::channel();
+        let streams = StreamConfig::default().with_user_input(channel_stream);
+        let mut machine = MachineBuilder::default().with_streams(streams).build();
+
+        let complete_answer: Vec<_> = machine
+            .run_query(r#"current_input(_), \+ at_end_of_stream."#)
+            .collect();
+
+        assert!(succeeded(complete_answer));
+
+        write!(user_input, "a(1,2,3).").unwrap();
+
+        let complete_answer: Vec<_> = machine
+            .run_query(r#"\+ at_end_of_stream, read(A)."#)
+            .collect();
+
+        assert_eq!(
+            complete_answer,
+            [Ok(LeafAnswer::from_bindings([(
+                "A",
+                Term::compound("a", [Term::integer(1), Term::integer(2), Term::integer(3),])
+            )]))]
+        );
+
+        // End-of-data but not end-of-stream;
+        let complete_answer: Vec<_> = machine
+            .run_query(
+                r#"
+                use_module(library(charsio)),
+                current_input(In), get_n_chars(In, N, C),
+                N == 0, \+ at_end_of_stream.
+            "#,
+            )
+            .collect();
+
+        assert!(succeeded(complete_answer));
+
+        // Dropping the sender closes the input
+        drop(user_input);
+
+        let complete_answer: Vec<_> = machine
+            .run_query(
+                r#"
+                current_input(In), get_n_chars(In, N, _),
+                N == 0, at_end_of_stream.
+            "#,
+            )
+            .collect();
+
+        assert!(succeeded(complete_answer));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn user_output_callback_stream() {
+        let test_string = Rc::new(RefCell::new(String::new()));
+
+        let streams =
+            StreamConfig::default().with_user_output(OutputStreamConfig::callback(Box::new({
+                let test_string = test_string.clone();
+                move |x| {
+                    x.read_to_string(&mut test_string.borrow_mut()).unwrap();
+                }
+            })));
+
+        let mut machine = MachineBuilder::default().with_streams(streams).build();
+
+        let complete_answer: Vec<_> = machine
+            .run_query(r#"current_output(Out), \+ at_end_of_stream(Out)."#)
+            .collect();
+
+        assert!(succeeded(complete_answer));
+
+        let complete_answer: Vec<_> = machine
+            .run_query(r#"write(asdf), nl, flush_output."#)
+            .collect();
+
+        assert!(succeeded(complete_answer));
+        assert_eq!(test_string.borrow().as_str(), "asdf\n");
+
+        let complete_answer: Vec<_> = machine.run_query(r#"write(abcd), flush_output."#).collect();
+
+        assert!(succeeded(complete_answer));
+        assert_eq!(test_string.borrow().as_str(), "asdf\nabcd");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn close_memory_user_output_stream() {
+        let mut machine = MachineBuilder::new()
+            .with_streams(StreamConfig::in_memory())
+            .build();
+
+        let results = machine
+            .run_query(
+                "\\+ \\+ (current_output(Stream), close(Stream)), write(user_output, hello).",
+            )
+            .collect::<Vec<_>>();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_ok());
+
+        let mut actual = String::new();
+        machine.user_output.read_to_string(&mut actual).unwrap();
+        assert_eq!(actual, "hello");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn close_memory_user_output_stream_twice() {
+        let mut machine = MachineBuilder::new()
+            .with_streams(StreamConfig::in_memory())
+            .build();
+
+        let results = machine
+            .run_query("\\+ \\+ (current_output(Stream), close(Stream), close(Stream)).")
+            .collect::<Vec<_>>();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_ok());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn close_realiased_stream() {
+        let mut machine = MachineBuilder::new().build();
+
+        let results = machine
+            .run_query(
+                r#"
+                \+ \+ (
+                    open("README.md", read, S, [alias(readme)]),
+                    open(stream(S), read, _, [alias(another_alias)]),
+                    close(S)
+                ),
+                open("README.md", read, _, [alias(readme)]).
+            "#,
+            )
+            .collect::<Vec<_>>();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_ok());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn close_realiased_user_output() {
+        let mut machine = MachineBuilder::new()
+            .with_streams(StreamConfig::in_memory())
+            .build();
+
+        let results = machine
+            .run_query(
+                r#"
+                \+ \+ (
+                    open("README.md", read, S),
+                    open(stream(S), read, _, [alias(user_output)]),
+                    close(S)
+                ),
+                write(user_output, hello).
+            "#,
+            )
+            .collect::<Vec<_>>();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_ok());
     }
 }

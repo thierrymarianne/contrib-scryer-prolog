@@ -15,7 +15,9 @@ impl RawBlockTraits for Stack {
 
     #[inline]
     fn align() -> usize {
-        mem::align_of::<HeapCellValue>()
+        mem::align_of::<OrFrame>()
+            .max(mem::align_of::<AndFrame>())
+            .max(mem::align_of::<HeapCellValue>())
     }
 }
 
@@ -172,7 +174,9 @@ impl Stack {
             let ptr = self.buf.alloc(frame_size);
 
             if ptr.is_null() {
-                self.buf.grow();
+                if !self.buf.grow() {
+                    panic!("growing the stack failed")
+                }
             } else {
                 return ptr;
             }
@@ -281,7 +285,6 @@ mod tests {
     use crate::machine::mock_wam::*;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn stack_tests() {
         let mut wam = MockWAM::new();
 

@@ -7,8 +7,6 @@ use crate::machine::machine_state::*;
 use crate::machine::*;
 use crate::types::*;
 
-use crate::try_numeric_result;
-
 use fxhash::FxBuildHasher;
 
 macro_rules! step_or_fail {
@@ -269,7 +267,16 @@ impl MachineState {
                         Literal::Rational(r)
                     }
                     (ArenaHeaderTag::Integer, n) => {
-                        Literal::Integer(n)
+                        let result = (&*n).try_into();
+
+                        match result {
+                            Ok(fixnum) => if let Ok(n) = Fixnum::build_with_checked(fixnum) {
+                                Literal::Fixnum(n)
+                            } else {
+                                Literal::Integer(n)
+                            },
+                            Err(_) => Literal::Integer(n)
+                        }
                     }
                     _ => {
                         unreachable!()
@@ -556,30 +563,62 @@ impl Machine {
                             self.machine_st.cp = self.machine_st.attr_var_init.cp;
                         }
 
-                        let mut p = self.machine_st.p;
-                        let mut arity = 0;
+                        let p = self.machine_st.p;
 
-                        while self.code[p].is_head_instr() {
-                            for r in self.code[p].registers() {
-                                if let RegType::Temp(t) = r {
-                                    arity = std::cmp::max(arity, t);
-                                }
-                            }
+                        // Find the boundaries of the current predicate
+                        self.indices.code_dir.sort_by(|_, a, _, b| a.cmp(b));
 
-                            p += 1;
-                        }
+                        let predicate_idx = self
+                            .indices
+                            .code_dir
+                            .binary_search_by_key(&p, |_, x| x.get().p() as usize)
+                            .unwrap_or_else(|x| x - 1);
+
+                        let current_pred_start = self
+                            .indices
+                            .code_dir
+                            .get_index(predicate_idx)
+                            .map(|x| x.1.p() as usize)
+                            .unwrap();
+
+                        debug_assert!(current_pred_start <= p);
+
+                        let current_pred_end = self
+                            .indices
+                            .code_dir
+                            .get_index(predicate_idx + 1)
+                            .map(|x| x.1.p() as usize)
+                            .unwrap_or(self.code.len());
+
+                        debug_assert!(current_pred_end >= p);
+                        debug_assert!(current_pred_end <= self.code.len());
+
+                        // Find point to insert the interrupt
+                        let p_interrupt = p + self.code[p..current_pred_end]
+                            .iter()
+                            .position(|x| !x.is_head_instr())
+                            .unwrap();
+
+                        // Scan registers of all instructions to find out how many to save
+                        let arity = self.code[current_pred_start..current_pred_end]
+                            .iter()
+                            .flat_map(Instruction::registers)
+                            .flat_map(|r| match r {
+                                RegType::Temp(t) => Some(t),
+                                _ => None,
+                            })
+                            .max()
+                            .unwrap_or(0);
 
                         let instr = std::mem::replace(
-                            &mut self.code[p],
+                            &mut self.code[p_interrupt],
                             Instruction::VerifyAttrInterrupt(arity),
                         );
 
                         self.code[VERIFY_ATTR_INTERRUPT_LOC] = instr;
-                        self.machine_st.attr_var_init.cp = p;
+                        self.machine_st.attr_var_init.cp = p_interrupt;
                     }
                     &Instruction::VerifyAttrInterrupt(arity) => {
-                        // let (_, arity) = self.code[VERIFY_ATTR_INTERRUPT_LOC].to_name_and_arity();
-                        // let arity = std::cmp::max(arity, self.machine_st.num_of_args);
                         self.run_verify_attr_interrupt(arity);
                     }
                     &Instruction::Add(ref a1, ref a2, t) => {
@@ -4054,6 +4093,14 @@ impl Machine {
                             .install_new_block(self.machine_st.registers[1]);
                         step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
                     }
+                    &Instruction::CallRandomInteger => {
+                        self.random_integer();
+                        step_or_fail!(self, self.machine_st.p += 1);
+                    }
+                    &Instruction::ExecuteRandomInteger => {
+                        self.random_integer();
+                        step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
+                    }
                     &Instruction::CallMaybe => {
                         self.maybe();
                         step_or_fail!(self, self.machine_st.p += 1);
@@ -4604,11 +4651,11 @@ impl Machine {
                         self.shell();
                         step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
                     }
-                    &Instruction::CallPID => {
+                    &Instruction::CallPid => {
                         self.pid();
                         step_or_fail!(self, self.machine_st.p += 1);
                     }
-                    &Instruction::ExecutePID => {
+                    &Instruction::ExecutePid => {
                         self.pid();
                         step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
                     }
@@ -4797,11 +4844,11 @@ impl Machine {
                         step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
                     }
                     &Instruction::CallLoadContextModule => {
-                        self.load_context_module(self.machine_st.registers[1]);
+                        self.load_context_module(self.deref_register(1));
                         step_or_fail!(self, self.machine_st.p += 1);
                     }
                     &Instruction::ExecuteLoadContextModule => {
-                        self.load_context_module(self.machine_st.registers[1]);
+                        self.load_context_module(self.deref_register(1));
                         step_or_fail!(self, self.machine_st.p = self.machine_st.cp);
                     }
                     &Instruction::CallLoadContextStream => {

@@ -9,7 +9,7 @@ use crate::types::*;
 use std::cmp::Ordering;
 use std::ops::{Deref, DerefMut};
 
-use derive_deref::*;
+use derive_more::*;
 use fxhash::FxBuildHasher;
 use indexmap::IndexSet;
 use num_order::NumOrd;
@@ -453,30 +453,6 @@ pub(crate) trait Unifier: DerefMut<Target = MachineState> {
         }
     }
 
-    fn unify_big_num<N>(&mut self, n1: TypedArenaPtr<N>, value: HeapCellValue)
-    where
-        N: PartialEq<Rational> + PartialEq<Integer> + PartialEq<i64> + ArenaAllocated,
-    {
-        if let Some(r) = value.as_var() {
-            Self::bind(self, r, typed_arena_ptr_as_cell!(n1));
-            return;
-        }
-
-        match Number::try_from(value) {
-            Ok(n2) => match n2 {
-                Number::Fixnum(n2) if *n1 == n2.get_num() => {}
-                Number::Integer(n2) if *n1 == *n2 => {}
-                Number::Rational(n2) if *n1 == *n2 => {}
-                _ => {
-                    self.fail = true;
-                }
-            },
-            Err(_) => {
-                self.fail = true;
-            }
-        }
-    }
-
     fn unify_big_integer(&mut self, n1: TypedArenaPtr<Integer>, value: HeapCellValue) {
         if let Some(r) = value.as_var() {
             Self::bind(self, r, typed_arena_ptr_as_cell!(n1));
@@ -758,6 +734,7 @@ fn bind_with_occurs_check<U: Unifier>(unifier: &mut U, r: Ref, value: HeapCellVa
 }
 
 #[derive(Deref, DerefMut)]
+#[deref(forward)]
 pub(crate) struct DefaultUnifier<'a> {
     machine_st: &'a mut MachineState,
 }
