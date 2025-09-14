@@ -6751,7 +6751,10 @@ impl Machine {
         match result {
             Ok(()) => Ok(()),
             Err(e) => {
-                self.user_input.reset();
+                match self.user_input {
+                    Stream::Byte(_) | Stream::Readline(_) => self.user_input.reset(),
+                    _ => true
+                };
                 Err(e)
             }
         }
