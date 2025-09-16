@@ -52,6 +52,13 @@ fn issue2725_dcg_without_module() {
     load_module_test("tests-pl/issue2725.pl", "");
 }
 
+#[serial]
+#[test]
+#[cfg_attr(miri, ignore)]
+fn issue3089_partial_string_loc_unreachable() {
+    load_module_test("tests-pl/issue3089-partial-string-loc-unreachable.pl", "");
+}
+
 #[test]
 #[cfg(feature = "http")]
 #[cfg(not(target_arch = "wasm32"))]
