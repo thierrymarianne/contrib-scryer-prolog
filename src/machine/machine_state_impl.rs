@@ -216,6 +216,9 @@ impl MachineState {
                 (HeapCellValueTag::AttrVar, h) => {
                     self.bind_attr_var(h, t1);
                 }
+                (HeapCellValueTag::PStrLoc, _pstr_loc) => {
+                    unreachable!("Attempted to bind stack cell to a partial string location");
+                }
                 _ => {
                     unreachable!();
                 }

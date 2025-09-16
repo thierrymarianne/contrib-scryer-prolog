@@ -63,3 +63,9 @@ fn http_open_hanging() {
             "received response with status code:200\nreceived response with status code:200\nreceived response with status code:200\nreceived response with status code:200\nreceived response with status code:200\n"
     );
 }
+
+#[serial]
+#[test]
+fn partial_string_loc_unreachable() {
+    load_module_test("tests-pl/issue-partial-string-loc-unreachable.pl", "");
+}
