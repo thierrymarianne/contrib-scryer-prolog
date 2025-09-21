@@ -1988,7 +1988,7 @@ impl Machine {
     pub(crate) fn directory_files(&mut self) -> CallResult {
         if let Some(dir) = self
             .machine_st
-            .value_to_str_like(self.machine_st.registers[1])
+            .value_to_str_like(self.deref_register(1))
         {
             let str = dir.as_str();
             let path = std::path::Path::new(&*str);
