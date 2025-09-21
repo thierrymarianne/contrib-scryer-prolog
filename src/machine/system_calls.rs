@@ -2158,7 +2158,7 @@ impl Machine {
     pub(crate) fn make_directory_path(&mut self) {
         if let Some(dir) = self
             .machine_st
-            .value_to_str_like(self.machine_st.registers[1])
+            .value_to_str_like(self.deref_register(1))
         {
             match fs::create_dir_all(&*dir.as_str()) {
                 Ok(_) => {}
