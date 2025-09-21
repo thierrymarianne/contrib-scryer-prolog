@@ -129,6 +129,13 @@ fn issue_path_canonical() {
     load_module_test("tests-pl/issue_path_canonical.pl", "path_canonicalized");
 }
 
+#[serial]
+#[test]
+#[cfg_attr(miri, ignore = "it takes too long to run")]
+fn issue_rename_file() {
+    load_module_test("tests-pl/issue_rename_file.pl", "file_renamed");
+}
+
 #[test]
 #[cfg(feature = "http")]
 #[cfg(not(target_arch = "wasm32"))]
