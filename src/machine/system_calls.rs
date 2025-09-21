@@ -2041,7 +2041,7 @@ impl Machine {
     pub(crate) fn file_size(&mut self) {
         if let Some(file) = self
             .machine_st
-            .value_to_str_like(self.machine_st.registers[1])
+            .value_to_str_like(self.deref_register(1))
         {
             let len = Number::arena_from(
                 fs::metadata(&*file.as_str()).unwrap().len(),
