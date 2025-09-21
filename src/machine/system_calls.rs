@@ -2285,7 +2285,7 @@ impl Machine {
     pub(crate) fn path_canonical(&mut self) -> CallResult {
         if let Some(path) = self
             .machine_st
-            .value_to_str_like(self.machine_st.registers[1])
+            .value_to_str_like(self.deref_register(1))
         {
             if let Ok(canonical) = fs::canonicalize(&*path.as_str()) {
                 let cs = match canonical.to_str() {
