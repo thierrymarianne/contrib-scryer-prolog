@@ -2175,7 +2175,7 @@ impl Machine {
     pub(crate) fn delete_file(&mut self) {
         if let Some(file) = self
             .machine_st
-            .value_to_str_like(self.machine_st.registers[1])
+            .value_to_str_like(self.deref_register(1))
         {
             match fs::remove_file(&*file.as_str()) {
                 Ok(_) => {}
