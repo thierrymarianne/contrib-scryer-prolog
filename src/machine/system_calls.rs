@@ -2209,11 +2209,11 @@ impl Machine {
     pub(crate) fn file_copy(&mut self) {
         if let Some(file) = self
             .machine_st
-            .value_to_str_like(self.machine_st.registers[1])
+            .value_to_str_like(self.deref_register(1))
         {
             if let Some(copied) = self
                 .machine_st
-                .value_to_str_like(self.machine_st.registers[2])
+                .value_to_str_like(self.deref_register(2))
             {
                 if fs::copy(&*file.as_str(), &*copied.as_str()).is_ok() {
                     return;
