@@ -2190,11 +2190,11 @@ impl Machine {
     pub(crate) fn rename_file(&mut self) {
         if let Some(file) = self
             .machine_st
-            .value_to_str_like(self.machine_st.registers[1])
+            .value_to_str_like(self.deref_register(1))
         {
             if let Some(renamed) = self
                 .machine_st
-                .value_to_str_like(self.machine_st.registers[2])
+                .value_to_str_like(self.deref_register(2))
             {
                 if fs::rename(&*file.as_str(), &*renamed.as_str()).is_ok() {
                     return;
