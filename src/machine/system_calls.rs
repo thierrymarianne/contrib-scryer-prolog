@@ -2102,7 +2102,7 @@ impl Machine {
     pub(crate) fn file_time(&mut self) {
         if let Some(file) = self
             .machine_st
-            .value_to_str_like(self.machine_st.registers[1])
+            .value_to_str_like(self.deref_register(1))
         {
             let which = cell_as_atom!(self.deref_register(2));
 
