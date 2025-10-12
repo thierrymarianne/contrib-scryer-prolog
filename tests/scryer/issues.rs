@@ -135,6 +135,13 @@ fn issue_path_canonical() {
 #[serial]
 #[test]
 #[cfg_attr(miri, ignore = "it takes too long to run")]
+fn issue_max_arity() {
+    load_module_test("tests-pl/issue_max_arity.pl", "");
+}
+
+#[serial]
+#[test]
+#[cfg_attr(miri, ignore = "it takes too long to run")]
 fn issue_rename_file() {
     load_module_test("tests-pl/issue_rename_file.pl", "file_renamed");
 }
