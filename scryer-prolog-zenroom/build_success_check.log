@@ -1,0 +1,45 @@
+Building Scryer Prolog for WASM...
+# Go to repo root, build, and output directly to the browser example folder
+cd .. && wasm-pack build --target web --out-dir scryer-zenroom/examples/browser --no-typescript --no-default-features
+[INFO]: 🎯  Checking for the Wasm target...
+[INFO]: 🌀  Compiling to Wasm...
+   Compiling scryer-prolog v0.10.0 (/Users/thierrymarianne/repositories/defending-thesis/tooling/logic-program-theorem-prover/with-claude/tmp/_src-scryer-prolog)
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `ring`
+  --> src/machine/system_calls.rs:77:5
+   |
+77 | use ring::rand::{SecureRandom, SystemRandom};
+   |     ^^^^ use of unresolved module or unlinked crate `ring`
+   |
+   = help: if you wanted to use a crate named `ring`, use `cargo add ring` to add it to your `Cargo.toml`
+
+error[E0432]: unresolved import `ring`
+  --> src/machine/system_calls.rs:78:5
+   |
+78 | use ring::{digest, hkdf, hmac, pbkdf2};
+   |     ^^^^ use of unresolved module or unlinked crate `ring`
+   |
+   = help: if you wanted to use a crate named `ring`, use `cargo add ring` to add it to your `Cargo.toml`
+
+warning: unused import: `tokio::runtime::Handle`
+  --> src/machine/system_calls.rs:99:5
+   |
+99 | use tokio::runtime::Handle;
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `tokio::task`
+   --> src/machine/system_calls.rs:100:5
+    |
+100 | use tokio::task;
+    |     ^^^^^^^^^^^
+
+Some errors have detailed explanations: E0432, E0433.
+For more information about an error, try `rustc --explain E0432`.
+warning: `scryer-prolog` (lib) generated 2 warnings
+error: could not compile `scryer-prolog` (lib) due to 2 previous errors; 2 warnings emitted
+Error: Compiling your crate to WebAssembly failed
+Caused by: Compiling your crate to WebAssembly failed
+Caused by: failed to execute `cargo build`: exited with exit status: 101
+  full command: cd "/Users/thierrymarianne/repositories/defending-thesis/tooling/logic-program-theorem-prover/with-claude/tmp/_src-scryer-prolog" && "cargo" "build" "--lib" "--release" "--target" "wasm32-unknown-unknown" "--no-default-features"
+error: Recipe `build-wasm` failed on line 107 with exit code 1

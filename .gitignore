@@ -1,5 +1,3 @@
+.direnv/
 src/static_atoms.rs
 target/
-.direnv/
-
-

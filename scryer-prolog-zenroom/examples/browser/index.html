@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Scryer Prolog + Zenroom WASM Demo</title>
+    <!-- Load Zenroom (using unpkg or local if available) -->
+    <script src="https://unpkg.com/zenroom@latest/dist/zenroom.min.js"></script>
+    
+    <!-- Load Scryer Prolog WASM (assuming it's built and served at /scryer_prolog.js) -->
+    <!-- Note: This path depends on how the user builds/serves the project -->
+    <script type="module">
+        import init, { ScryerProlog } from './scryer_prolog.js';
+        
+        async function run() {
+            await init();
+            const prolog = new ScryerProlog();
+            
+            // Load our JS Bridge
+            await import('../../js/zenroom_bridge.js');
+            
+            document.getElementById('status').innerText = "Ready";
+            
+            window.runProlog = () => {
+                const query = document.getElementById('query').value;
+                const output = prolog.query(query);
+                document.getElementById('output').innerText = output;
+            };
+        }
+        
+        run();
+    </script>
+</head>
+<body>
+    <h1>Scryer Prolog + Zenroom (WASM)</h1>
+    <div id="status">Loading...</div>
+    
+    <div>
+        <h3>Test Query</h3>
+        <textarea id="query" rows="4" cols="80">
+:- use_module('lib/zenroom_wasm').
+:- zencode_exec("print('Hello from Zenroom')", [], [], Output, Error).
+        </textarea>
+        <button onclick="runProlog()">Run Query</button>
+    </div>
+    
+    <h3>Output</h3>
+    <pre id="output"></pre>
+</body>
+</html>

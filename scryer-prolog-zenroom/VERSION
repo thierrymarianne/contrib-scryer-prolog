@@ -1,0 +1,135 @@
+# Scryer-Zenroom - Standalone Package
+
+Version: 0.1.0-alpha (Cycle 1)
+Status: Development - Cycle 1 Complete
+
+## Package Information
+
+- **Name:** scryer-prolog-zenroom
+- **Type:** Prolog Library Package
+- **Target:** Scryer Prolog >= 0.9.0
+- **License:** BSD-3-Clause
+- **Author:** Thierry Marianne
+
+## Features (Cycle 1)
+
+- ✅ Basic Zencode script execution
+- ✅ Lua script execution in Zenroom
+- ✅ FFI bindings to Zenroom C API
+- ✅ Cross-platform support (Linux, macOS)
+- ✅ Comprehensive test suite
+- ✅ Example programs
+
+## Package Contents
+
+```
+scryer-prolog-zenroom/
+├── lib/
+│   ├── zenroom.pl         # User-facing API (156 lines)
+│   └── zenroom_ffi.pl     # FFI bindings (142 lines)
+├── tests/
+│   └── zenroom_basic.pl   # Test suite (52 lines)
+├── scripts/
+│   └── build-zenroom.sh   # Zenroom builder (124 lines)
+├── docs/
+│   └── ZENROOM_CYCLE1.md  # Cycle 1 documentation
+├── examples/
+│   ├── README.md
+│   ├── 01_simple_output.pl
+│   ├── 02_ecdh_keypair.pl
+│   └── 03_data_processing.pl
+├── README.md              # Main documentation
+├── LICENSE                # BSD-3-Clause
+├── CONTRIBUTING.md        # Contribution guidelines
+├── VERSION                # This file
+└── install.sh             # Installation script
+```
+
+## Dependencies
+
+### Runtime
+- Scryer Prolog (>= 0.9.0)
+- Zenroom shared library (libzenroom.so/.dylib)
+
+### Build
+- Git
+- CMake or Make
+- GCC/Clang
+
+## Installation
+
+### Quick Install
+```bash
+./install.sh user
+```
+
+### Manual Install
+```bash
+# Build Zenroom
+./scripts/build-zenroom.sh
+
+# Copy to library directory
+mkdir -p ~/.scryer-prolog/lib/zenroom
+cp lib/*.pl ~/.scryer-prolog/lib/zenroom/
+cp libzenroom.* ~/.scryer-prolog/lib/zenroom/ 2>/dev/null || true
+
+# Set library path
+export SCRYER_PROLOG_LIBRARY_PATH="$HOME/.scryer-prolog/lib:$SCRYER_PROLOG_LIBRARY_PATH"
+```
+
+## Testing
+
+```bash
+scryer-prolog tests/zenroom_basic.pl
+```
+
+Expected: 4/4 tests pass
+
+## Usage
+
+```prolog
+?- use_module(library(zenroom)).
+?- zencode_exec("Given nothing\nThen print 'test'", "", "", O, _).
+```
+
+## Roadmap
+
+- [x] Cycle 1: Foundation (v0.1.0-alpha)
+- [ ] Cycle 2: Enhanced error handling (v0.2.0-alpha)
+- [ ] Cycle 3: Extended execution (v0.3.0-alpha)
+- [ ] Cycle 4: Validation (v0.4.0-alpha)
+- [ ] Cycles 5-6: Crypto primitives (v0.5.0-beta)
+- [ ] Cycle 7: Introspection (v0.6.0-beta)
+- [ ] Cycle 8: High-level helpers (v0.7.0-beta)
+- [ ] Cycle 9: JSON integration (v0.8.0-beta)
+- [ ] Cycle 10: Documentation (v1.0.0)
+
+## Changelog
+
+### 0.1.0-alpha (2026-01-18) - Cycle 1
+- Initial release
+- Basic Zencode/Lua execution
+- FFI bindings
+- Test suite
+- Build automation
+- Examples
+
+## Distribution
+
+This package can be:
+- Cloned from Git repository
+- Distributed as tarball
+- Installed via package manager (future)
+- Included in Scryer Prolog distributions (future)
+
+## Support
+
+- Issues: GitHub Issues
+- Documentation: docs/ directory
+- Examples: examples/ directory
+
+## Links
+
+- Repository: (to be published)
+- Zenroom: https://zenroom.org
+- Scryer Prolog: https://scryer.pl

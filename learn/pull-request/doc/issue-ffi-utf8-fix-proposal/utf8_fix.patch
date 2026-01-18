@@ -1,0 +1,16 @@
+diff --git a/src/ffi.rs b/src/ffi.rs
+index 1234567..abcdefg 100644
+--- a/src/ffi.rs
++++ b/src/ffi.rs
+@@ -1023,8 +1023,9 @@ impl MachineState {
+ 
+ #[inline(always)]
+ fn start_convert(cstr: &CStr) -> CString {
+-    // BUGGY VERSION: Panics on invalid UTF-8
+-    cstr.to_owned()
++    // FIXED VERSION: Handles invalid UTF-8 gracefully
++    let string_lossy = cstr.to_string_lossy();
++    CString::new(string_lossy.as_ref()).unwrap_or_else(|_| CString::default())
+ }
+ 
+ #[cfg(test)]

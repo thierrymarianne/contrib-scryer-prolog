@@ -1,0 +1,28 @@
+# Ignore build artifacts
+build/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# Ignore Zenroom source (will be cloned during build)
+zenroom-src/
+
+# Ignore bakage dependencies
+scryer_libs/
+
+# Ignore editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore test outputs
+*.log
+*.out

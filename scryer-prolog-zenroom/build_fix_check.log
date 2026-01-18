@@ -1,0 +1,102 @@
+Building Scryer Prolog for WASM...
+# Go to repo root, build, and output directly to the browser example folder
+cd .. && wasm-pack build --target web --out-dir scryer-zenroom/examples/browser --no-typescript --no-default-features
+[INFO]: 🎯  Checking for the Wasm target...
+[INFO]: 🌀  Compiling to Wasm...
+   Compiling string_cache v0.8.9
+   Compiling rand_core v0.6.4
+   Compiling scryer-prolog v0.10.0 (/Users/thierrymarianne/repositories/defending-thesis/tooling/logic-program-theorem-prover/with-claude/tmp/_src-scryer-prolog)
+   Compiling scryer-modular-bitfield-impl v0.11.2
+   Compiling radium v0.7.0
+   Compiling futures-executor v0.3.31
+   Compiling sha2 v0.10.9
+   Compiling git-version-macro v0.3.9
+   Compiling tokio-macros v2.5.0
+   Compiling dirs-sys-next v0.1.2
+   Compiling rand_chacha v0.3.1
+   Compiling markup5ever v0.14.1
+   Compiling hashbrown v0.15.3
+   Compiling funty v2.0.0
+   Compiling rand v0.8.5
+   Compiling aliasable v0.1.3
+   Compiling equivalent v1.0.2
+   Compiling bytes v1.10.1
+   Compiling ego-tree v0.10.0
+   Compiling html5ever v0.29.1
+   Compiling dashu-int v0.4.1
+   Compiling ryu v1.0.20
+   Compiling bit-vec v0.8.0
+   Compiling scryer-modular-bitfield v0.11.4
+   Compiling bit-set v0.8.0
+   Compiling serde_json v1.0.140
+   Compiling tokio v1.45.0
+   Compiling indexmap v2.9.0
+   Compiling ouroboros v0.18.5
+   Compiling git-version v0.3.9
+   Compiling scraper v0.23.1
+   Compiling bitvec v1.0.1
+   Compiling crrl v0.9.0
+   Compiling dashu-float v0.4.3
+   Compiling futures v0.3.31
+   Compiling dirs-next v2.0.0
+   Compiling lexical v7.0.4
+   Compiling puruspe v0.4.1
+   Compiling libc v0.2.172
+   Compiling chrono v0.4.41
+   Compiling web-sys v0.3.77
+   Compiling dashu-ratio v0.4.1
+   Compiling wasm-bindgen-futures v0.4.50
+   Compiling serde-wasm-bindgen v0.6.5
+   Compiling dashu v0.4.2
+   Compiling console_error_panic_hook v0.1.7
+warning: scryer-prolog@0.10.0: parse error: expected `>` in file "src/ffi.rs"
+   Compiling ripemd v0.1.3
+   Compiling blake2 v0.10.6
+   Compiling ordered-float v5.0.0
+   Compiling roxmltree v0.20.0
+   Compiling libloading v0.8.7
+   Compiling base64 v0.22.1
+   Compiling cpu-time v1.0.0
+   Compiling divrem v1.0.0
+   Compiling arcu v0.1.2
+   Compiling lazy_static v1.5.0
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `ring`
+  --> src/machine/system_calls.rs:77:5
+   |
+77 | use ring::rand::{SecureRandom, SystemRandom};
+   |     ^^^^ use of unresolved module or unlinked crate `ring`
+   |
+   = help: if you wanted to use a crate named `ring`, use `cargo add ring` to add it to your `Cargo.toml`
+
+error[E0432]: unresolved import `ring`
+  --> src/machine/system_calls.rs:78:5
+   |
+78 | use ring::{digest, hkdf, hmac, pbkdf2};
+   |     ^^^^ use of unresolved module or unlinked crate `ring`
+   |
+   = help: if you wanted to use a crate named `ring`, use `cargo add ring` to add it to your `Cargo.toml`
+
+warning: unused import: `tokio::runtime::Handle`
+  --> src/machine/system_calls.rs:99:5
+   |
+99 | use tokio::runtime::Handle;
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `tokio::task`
+   --> src/machine/system_calls.rs:100:5
+    |
+100 | use tokio::task;
+    |     ^^^^^^^^^^^
+
+Some errors have detailed explanations: E0432, E0433.
+For more information about an error, try `rustc --explain E0432`.
+warning: `scryer-prolog` (lib) generated 2 warnings
+warning: scryer-prolog@0.10.0: parse error: expected `>` in file "src/ffi.rs"
+error: could not compile `scryer-prolog` (lib) due to 2 previous errors; 2 warnings emitted
+Error: Compiling your crate to WebAssembly failed
+Caused by: Compiling your crate to WebAssembly failed
+Caused by: failed to execute `cargo build`: exited with exit status: 101
+  full command: cd "/Users/thierrymarianne/repositories/defending-thesis/tooling/logic-program-theorem-prover/with-claude/tmp/_src-scryer-prolog" && "cargo" "build" "--lib" "--release" "--target" "wasm32-unknown-unknown" "--no-default-features"
+error: Recipe `build-wasm` failed on line 107 with exit code 1

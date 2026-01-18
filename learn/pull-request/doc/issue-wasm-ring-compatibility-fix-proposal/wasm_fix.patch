@@ -1,0 +1,142 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 5971a229..39e02ac4 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -23,7 +23,7 @@ repl = ["dep:crossterm", "dep:ctrlc", "dep:rustyline"]
+ hostname = ["dep:hostname"]
+ tls = ["dep:native-tls"]
+ http = ["dep:warp", "dep:reqwest"]
+-crypto-full = []
++crypto-full = ["ring"]
+ 
+ [lints.rust]
+ unexpected_cfgs = { level = "deny", check-cfg = [
+@@ -71,7 +71,7 @@ ordered-float = "5.0.0"
+ phf = { version = "0.11", features = ["macros"] }
+ puruspe = "0.4.1"
+ rand = "0.8.5"
+-ring = { version = "0.17.8", features = ["wasm32_unknown_unknown_js"] }
++ring = { version = "0.17.8", features = ["wasm32_unknown_unknown_js"], optional = true }
+ ripemd = "0.1.3"
+ roxmltree = "0.20.0"
+ ryu = "1.0.18"
+diff --git a/src/machine/system_calls.rs b/src/machine/system_calls.rs
+index 4b21da33..f3eecb86 100644
+--- a/src/machine/system_calls.rs
++++ b/src/machine/system_calls.rs
+@@ -74,10 +74,12 @@
+ use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+ 
+ use blake2::{Blake2b512, Blake2s256};
++#[cfg(feature = "ring")]
+ use ring::rand::{SecureRandom, SystemRandom};
++#[cfg(feature = "ring")]
+ use ring::{digest, hkdf, hmac, pbkdf2};
+ 
+-#[cfg(feature = "crypto-full")]
++#[cfg(all(feature = "crypto-full", feature = "ring"))]
+ use ring::aead;
+ use ripemd::{Digest, Ripemd160};
+ use sha3::{Sha3_224, Sha3_256, Sha3_384, Sha3_512};
+@@ -7829,6 +7831,8 @@ pub(crate) fn scryer_prolog_version(&mut self) {
+     }
+ 
+     #[inline(always)]
++    #[inline(always)]
++    #[cfg(feature = "ring")]
+     pub(crate) fn crypto_random_byte(&mut self) {
+         let arg = self.machine_st.registers[1];
+         let mut bytes: [u8; 1] = [0];
+@@ -7848,7 +7852,15 @@ pub(crate) fn crypto_random_byte(&mut self) {
+         self.machine_st.unify_fixnum(byte, arg);
+     }
+ 
++    #[cfg(not(feature = "ring"))]
++    pub(crate) fn crypto_random_byte(&mut self) {
++        // crypto not supported
++        self.machine_st.fail = true;
++    }
++
++    #[inline(always)]
+     #[inline(always)]
++    #[cfg(feature = "ring")]
+     pub(crate) fn crypto_data_hash(&mut self) {
+         let encoding = cell_as_atom!(self.deref_register(2));
+         let bytes = self.string_encoding_bytes(self.machine_st.registers[1], encoding);
+@@ -8006,7 +8018,15 @@ pub(crate) fn crypto_data_hash(&mut self) {
+         unify!(self.machine_st, self.machine_st.registers[3], ints_list);
+     }
+ 
++    #[cfg(not(feature = "ring"))]
++    pub(crate) fn crypto_data_hash(&mut self) {
++        // crypto not supported
++        self.machine_st.fail = true;
++    }
++
+     #[inline(always)]
++    #[inline(always)]
++    #[cfg(feature = "ring")]
+     pub(crate) fn crypto_hmac(&mut self) {
+         let encoding = cell_as_atom!(self.deref_register(2));
+         let data = self.string_encoding_bytes(self.machine_st.registers[1], encoding);
+@@ -8044,7 +8064,14 @@ pub(crate) fn crypto_hmac(&mut self) {
+         unify!(self.machine_st, self.machine_st.registers[4], ints_list);
+     }
+ 
++    #[cfg(not(feature = "ring"))]
++    pub(crate) fn crypto_hmac(&mut self) {
++        self.machine_st.fail = true;
++    }
++
++    #[inline(always)]
+     #[inline(always)]
++    #[cfg(feature = "ring")]
+     pub(crate) fn crypto_data_hkdf(&mut self) {
+         let encoding = cell_as_atom!(self.deref_register(2));
+         let data = self.string_encoding_bytes(self.machine_st.registers[1], encoding);
+@@ -8116,7 +8143,14 @@ pub(crate) fn crypto_data_hkdf(&mut self) {
+         unify!(self.machine_st, self.machine_st.registers[7], ints_list);
+     }
+ 
++    #[cfg(not(feature = "ring"))]
++    pub(crate) fn crypto_data_hkdf(&mut self) {
++        self.machine_st.fail = true;
++    }
++
++    #[inline(always)]
+     #[inline(always)]
++    #[cfg(feature = "ring")]
+     pub(crate) fn crypto_password_hash(&mut self) {
+         let stub1_gen = || functor_stub(atom!("crypto_password_hash"), 3);
+         let data = self
+@@ -8172,6 +8206,11 @@ pub(crate) fn crypto_password_hash(&mut self) {
+         unify!(self.machine_st, self.machine_st.registers[4], ints_list);
+     }
+ 
++    #[cfg(not(feature = "ring"))]
++    pub(crate) fn crypto_password_hash(&mut self) {
++        self.machine_st.fail = true;
++    }
++
+     #[cfg(feature = "crypto-full")]
+     #[inline(always)]
+     pub(crate) fn crypto_data_encrypt(&mut self) {
+@@ -9503,6 +9542,7 @@ pub(super) fn u8s_to_string(&mut self, data: &[u8]) -> Result<HeapCellValue, All
+     }
+ }
+ 
++#[cfg(feature = "ring")]
+ fn rng() -> &'static dyn SecureRandom {
+     use std::ops::Deref;
+ 
+@@ -9513,8 +9553,10 @@ fn rng() -> &'static dyn SecureRandom {
+     RANDOM.deref()
+ }
+ 
++#[cfg(feature = "ring")]
+ struct MyKey<T: core::fmt::Debug + PartialEq>(T);
+ 
++#[cfg(feature = "ring")]
+ impl hkdf::KeyType for MyKey<usize> {
+     fn len(&self) -> usize {
+         self.0

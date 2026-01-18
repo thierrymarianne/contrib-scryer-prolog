@@ -74,10 +74,12 @@ use crossterm::event::{read, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
 use blake2::{Blake2b512, Blake2s256};
+#[cfg(feature = "ring")]
 use ring::rand::{SecureRandom, SystemRandom};
+#[cfg(feature = "ring")]
 use ring::{digest, hkdf, hmac, pbkdf2};
 
-#[cfg(feature = "crypto-full")]
+#[cfg(all(feature = "crypto-full", feature = "ring"))]
 use ring::aead;
 use ripemd::{Digest, Ripemd160};
 use sha3::{Sha3_224, Sha3_256, Sha3_384, Sha3_512};
@@ -5125,9 +5127,12 @@ impl Machine {
                 unify!(self.machine_st, return_value, struct_value);
             }
             Value::CString(cstr) => {
+                // Use lossy conversion to handle invalid UTF-8 gracefully
+                // As per std::ffi::CStr documentation: replaces invalid sequences with U+FFFD
+                // Reference: https://doc.rust-lang.org/std/ffi/struct.CStr.html#method.to_string_lossy
                 let str_cell = resource_error_call_result!(
                     self.machine_st,
-                    self.machine_st.heap.allocate_cstr(cstr.to_str().unwrap())
+                    self.machine_st.heap.allocate_cstr(&cstr.to_string_lossy())
                 );
 
                 unify!(self.machine_st, str_cell, return_value);
@@ -7826,6 +7831,8 @@ impl Machine {
     }
 
     #[inline(always)]
+    #[inline(always)]
+    #[cfg(feature = "ring")]
     pub(crate) fn crypto_random_byte(&mut self) {
         let arg = self.machine_st.registers[1];
         let mut bytes: [u8; 1] = [0];
@@ -7845,7 +7852,15 @@ impl Machine {
         self.machine_st.unify_fixnum(byte, arg);
     }
 
+    #[cfg(not(feature = "ring"))]
+    pub(crate) fn crypto_random_byte(&mut self) {
+        // crypto not supported
+        self.machine_st.fail = true;
+    }
+
     #[inline(always)]
+    #[inline(always)]
+    #[cfg(feature = "ring")]
     pub(crate) fn crypto_data_hash(&mut self) {
         let encoding = cell_as_atom!(self.deref_register(2));
         let bytes = self.string_encoding_bytes(self.machine_st.registers[1], encoding);
@@ -8003,7 +8018,15 @@ impl Machine {
         unify!(self.machine_st, self.machine_st.registers[3], ints_list);
     }
 
+    #[cfg(not(feature = "ring"))]
+    pub(crate) fn crypto_data_hash(&mut self) {
+        // crypto not supported
+        self.machine_st.fail = true;
+    }
+
     #[inline(always)]
+    #[inline(always)]
+    #[cfg(feature = "ring")]
     pub(crate) fn crypto_hmac(&mut self) {
         let encoding = cell_as_atom!(self.deref_register(2));
         let data = self.string_encoding_bytes(self.machine_st.registers[1], encoding);
@@ -8041,7 +8064,14 @@ impl Machine {
         unify!(self.machine_st, self.machine_st.registers[4], ints_list);
     }
 
+    #[cfg(not(feature = "ring"))]
+    pub(crate) fn crypto_hmac(&mut self) {
+        self.machine_st.fail = true;
+    }
+
     #[inline(always)]
+    #[inline(always)]
+    #[cfg(feature = "ring")]
     pub(crate) fn crypto_data_hkdf(&mut self) {
         let encoding = cell_as_atom!(self.deref_register(2));
         let data = self.string_encoding_bytes(self.machine_st.registers[1], encoding);
@@ -8113,7 +8143,14 @@ impl Machine {
         unify!(self.machine_st, self.machine_st.registers[7], ints_list);
     }
 
+    #[cfg(not(feature = "ring"))]
+    pub(crate) fn crypto_data_hkdf(&mut self) {
+        self.machine_st.fail = true;
+    }
+
     #[inline(always)]
+    #[inline(always)]
+    #[cfg(feature = "ring")]
     pub(crate) fn crypto_password_hash(&mut self) {
         let stub1_gen = || functor_stub(atom!("crypto_password_hash"), 3);
         let data = self
@@ -8167,6 +8204,11 @@ impl Machine {
         };
 
         unify!(self.machine_st, self.machine_st.registers[4], ints_list);
+    }
+
+    #[cfg(not(feature = "ring"))]
+    pub(crate) fn crypto_password_hash(&mut self) {
+        self.machine_st.fail = true;
     }
 
     #[cfg(feature = "crypto-full")]
@@ -9500,6 +9542,7 @@ impl Machine {
     }
 }
 
+#[cfg(feature = "ring")]
 fn rng() -> &'static dyn SecureRandom {
     use std::ops::Deref;
 
@@ -9510,8 +9553,10 @@ fn rng() -> &'static dyn SecureRandom {
     RANDOM.deref()
 }
 
+#[cfg(feature = "ring")]
 struct MyKey<T: core::fmt::Debug + PartialEq>(T);
 
+#[cfg(feature = "ring")]
 impl hkdf::KeyType for MyKey<usize> {
     fn len(&self) -> usize {
         self.0
