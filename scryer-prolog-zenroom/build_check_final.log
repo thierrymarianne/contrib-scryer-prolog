@@ -1,0 +1,288 @@
+Building Scryer Prolog for WASM...
+# Go to repo root, build, and output directly to the browser example folder
+cd .. && wasm-pack build --target web --out-dir scryer-zenroom/examples/browser --no-typescript --no-default-features
+[INFO]: 🎯  Checking for the Wasm target...
+[INFO]: 🌀  Compiling to Wasm...
+   Compiling scryer-prolog v0.10.0 (/Users/thierrymarianne/repositories/defending-thesis/tooling/logic-program-theorem-prover/with-claude/tmp/_src-scryer-prolog)
+error: unexpected `cfg` condition value: `ring`
+  --> src/machine/system_calls.rs:77:7
+   |
+77 | #[cfg(feature = "ring")]
+   |       ^^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+   = help: consider adding `ring` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+   = note: requested on the command line with `-D unexpected-cfgs`
+
+error: unexpected `cfg` condition value: `ring`
+  --> src/machine/system_calls.rs:79:7
+   |
+79 | #[cfg(feature = "ring")]
+   |       ^^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+   = help: consider adding `ring` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+error: unexpected `cfg` condition value: `ring`
+  --> src/machine/system_calls.rs:82:36
+   |
+82 | #[cfg(all(feature = "crypto-full", feature = "ring"))]
+   |                                    ^^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+   = help: consider adding `ring` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+error: unexpected `cfg` condition value: `ring`
+    --> src/machine/system_calls.rs:9545:7
+     |
+9545 | #[cfg(feature = "ring")]
+     |       ^^^^^^^^^^^^^^^^
+     |
+     = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+     = help: consider adding `ring` as a feature in `Cargo.toml`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+error: unexpected `cfg` condition value: `ring`
+    --> src/machine/system_calls.rs:9556:7
+     |
+9556 | #[cfg(feature = "ring")]
+     |       ^^^^^^^^^^^^^^^^
+     |
+     = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+     = help: consider adding `ring` as a feature in `Cargo.toml`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+error: unexpected `cfg` condition value: `ring`
+    --> src/machine/system_calls.rs:9559:7
+     |
+9559 | #[cfg(feature = "ring")]
+     |       ^^^^^^^^^^^^^^^^
+     |
+     = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+     = help: consider adding `ring` as a feature in `Cargo.toml`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unused import: `lazy_static::lazy_static`
+ --> src/machine/system_calls.rs:3:5
+  |
+3 | use lazy_static::lazy_static;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::num::NonZeroU32`
+  --> src/machine/system_calls.rs:57:5
+   |
+57 | use std::num::NonZeroU32;
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Blake2b512` and `Blake2s256`
+  --> src/machine/system_calls.rs:76:14
+   |
+76 | use blake2::{Blake2b512, Blake2s256};
+   |              ^^^^^^^^^^  ^^^^^^^^^^
+
+warning: unused import: `Ripemd160`
+  --> src/machine/system_calls.rs:84:22
+   |
+84 | use ripemd::{Digest, Ripemd160};
+   |                      ^^^^^^^^^
+
+warning: unused imports: `Sha3_224`, `Sha3_256`, `Sha3_384`, and `Sha3_512`
+  --> src/machine/system_calls.rs:85:12
+   |
+85 | use sha3::{Sha3_224, Sha3_256, Sha3_384, Sha3_512};
+   |            ^^^^^^^^  ^^^^^^^^  ^^^^^^^^  ^^^^^^^^
+
+warning: unused import: `tokio::runtime::Handle`
+   --> src/machine/system_calls.rs:101:5
+    |
+101 | use tokio::runtime::Handle;
+    |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `tokio::task`
+   --> src/machine/system_calls.rs:102:5
+    |
+102 | use tokio::task;
+    |     ^^^^^^^^^^^
+
+error: unexpected `cfg` condition value: `ring`
+    --> src/machine/system_calls.rs:7835:11
+     |
+7835 |     #[cfg(feature = "ring")]
+     |           ^^^^^^^^^^^^^^^^
+     |
+     = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+     = help: consider adding `ring` as a feature in `Cargo.toml`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+error: unexpected `cfg` condition value: `ring`
+    --> src/machine/system_calls.rs:7855:15
+     |
+7855 |     #[cfg(not(feature = "ring"))]
+     |               ^^^^^^^^^^^^^^^^
+     |
+     = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+     = help: consider adding `ring` as a feature in `Cargo.toml`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+error: unexpected `cfg` condition value: `ring`
+    --> src/machine/system_calls.rs:7863:11
+     |
+7863 |     #[cfg(feature = "ring")]
+     |           ^^^^^^^^^^^^^^^^
+     |
+     = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+     = help: consider adding `ring` as a feature in `Cargo.toml`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+error: unexpected `cfg` condition value: `ring`
+    --> src/machine/system_calls.rs:8021:15
+     |
+8021 |     #[cfg(not(feature = "ring"))]
+     |               ^^^^^^^^^^^^^^^^
+     |
+     = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+     = help: consider adding `ring` as a feature in `Cargo.toml`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+error: unexpected `cfg` condition value: `ring`
+    --> src/machine/system_calls.rs:8029:11
+     |
+8029 |     #[cfg(feature = "ring")]
+     |           ^^^^^^^^^^^^^^^^
+     |
+     = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+     = help: consider adding `ring` as a feature in `Cargo.toml`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+error: unexpected `cfg` condition value: `ring`
+    --> src/machine/system_calls.rs:8067:15
+     |
+8067 |     #[cfg(not(feature = "ring"))]
+     |               ^^^^^^^^^^^^^^^^
+     |
+     = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+     = help: consider adding `ring` as a feature in `Cargo.toml`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+error: unexpected `cfg` condition value: `ring`
+    --> src/machine/system_calls.rs:8074:11
+     |
+8074 |     #[cfg(feature = "ring")]
+     |           ^^^^^^^^^^^^^^^^
+     |
+     = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+     = help: consider adding `ring` as a feature in `Cargo.toml`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+error: unexpected `cfg` condition value: `ring`
+    --> src/machine/system_calls.rs:8146:15
+     |
+8146 |     #[cfg(not(feature = "ring"))]
+     |               ^^^^^^^^^^^^^^^^
+     |
+     = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+     = help: consider adding `ring` as a feature in `Cargo.toml`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+error: unexpected `cfg` condition value: `ring`
+    --> src/machine/system_calls.rs:8153:11
+     |
+8153 |     #[cfg(feature = "ring")]
+     |           ^^^^^^^^^^^^^^^^
+     |
+     = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+     = help: consider adding `ring` as a feature in `Cargo.toml`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+error: unexpected `cfg` condition value: `ring`
+    --> src/machine/system_calls.rs:8209:15
+     |
+8209 |     #[cfg(not(feature = "ring"))]
+     |               ^^^^^^^^^^^^^^^^
+     |
+     = note: expected values for `feature` are: `crypto-full`, `default`, `ffi`, `hostname`, `http`, `repl`, and `tls`
+     = help: consider adding `ring` as a feature in `Cargo.toml`
+     = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unused import: `Digest`
+  --> src/machine/system_calls.rs:84:14
+   |
+84 | use ripemd::{Digest, Ripemd160};
+   |              ^^^^^^
+
+warning: multiple variants are never constructed
+   --> src/machine/machine_errors.rs:945:5
+    |
+935 | pub(crate) enum DomainErrorType {
+    |                 --------------- variants in this enum
+...
+945 |     Allocator,
+    |     ^^^^^^^^^
+946 |     FfiStruct,
+    |     ^^^^^^^^^
+947 |     ZeroOrOne,
+    |     ^^^^^^^^^
+948 |     NonNullPtr,
+    |     ^^^^^^^^^^
+949 |     PtrLike,
+    |     ^^^^^^^
+950 |     F64,
+    |     ^^^
+951 |     FfiArgument,
+    |     ^^^^^^^^^^^
+952 |     FfiArgumentType,
+    |     ^^^^^^^^^^^^^^^
+953 |     FixedSizedInt,
+    |     ^^^^^^^^^^^^^
+954 |     NonCStrFfiArgumentType,
+    |     ^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `DomainErrorType` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variants `FfiLayout` and `FfiAbi` are never constructed
+   --> src/machine/machine_errors.rs:993:5
+    |
+985 | pub(crate) enum RepFlag {
+    |                 ------- variants in this enum
+...
+993 |     FfiLayout,
+    |     ^^^^^^^^^
+994 |     FfiAbi,
+    |     ^^^^^^
+    |
+    = note: `RepFlag` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: variants `FfiFunction`, `FfiStructConstructor`, and `FfiStructType` are never constructed
+    --> src/machine/machine_errors.rs:1188:5
+     |
+1176 | pub enum ExistenceError {
+     |          -------------- variants in this enum
+...
+1188 |     FfiFunction(Atom, usize),
+     |     ^^^^^^^^^^^
+1189 |     FfiStructConstructor(Atom, usize),
+     |     ^^^^^^^^^^^^^^^^^^^^
+1190 |     FfiStructType(Atom),
+     |     ^^^^^^^^^^^^^
+     |
+     = note: `ExistenceError` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: enum `HeapCellValueView` is never used
+  --> src/types.rs:52:10
+   |
+52 | pub enum HeapCellValueView {
+   |          ^^^^^^^^^^^^^^^^^
+
+warning: `scryer-prolog` (lib) generated 12 warnings
+error: could not compile `scryer-prolog` (lib) due to 16 previous errors; 12 warnings emitted
+Error: Compiling your crate to WebAssembly failed
+Caused by: Compiling your crate to WebAssembly failed
+Caused by: failed to execute `cargo build`: exited with exit status: 101
+  full command: cd "/Users/thierrymarianne/repositories/defending-thesis/tooling/logic-program-theorem-prover/with-claude/tmp/_src-scryer-prolog" && "cargo" "build" "--lib" "--release" "--target" "wasm32-unknown-unknown" "--no-default-features"
+error: Recipe `build-wasm` failed on line 107 with exit code 1
