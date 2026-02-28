@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Install Scryer Prolog (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install scryer-prolog
+      
+      - name: Install Scryer Prolog (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # Build from source or use pre-built binary
+          wget https://github.com/mthom/scryer-prolog/releases/latest/download/scryer-prolog-linux -O scryer-prolog
+          chmod +x scryer-prolog
+          sudo mv scryer-prolog /usr/local/bin/scryer-prolog
+      
+      - name: Install Just
+        uses: extractions/setup-just@v1
+      
+      - name: Build Zenroom Library
+        run: |
+          if [ "$RUNNER_OS" == "macOS" ]; then
+            just build-zenroom-macos
+            sudo cp build/libzenroom.dylib /usr/local/lib/
+          else
+            just build-zenroom-linux
+            sudo cp build/libzenroom.so /usr/local/lib/
+          fi
+      
+      - name: Check Zenroom Library
+        run: just check-zenroom
+      
+      - name: Run Tests
+        run: just test
+      
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-${{ matrix.os }}
+          path: |
+            tests/*.log
+            build/zenroom-src/*.log
