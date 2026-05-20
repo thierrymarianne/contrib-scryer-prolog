@@ -308,6 +308,26 @@ pub(crate) trait Unifier: DerefMut<Target = MachineState> {
     }
 
     fn unify_constant(&mut self, ptr: UntypedArenaPtr, value: HeapCellValue) {
+        // Defensive guard against a Cons-tagged heap cell whose lower
+        // 61-bit payload does not actually encode a valid arena
+        // pointer. Without this guard the next deref (the `ldr` that
+        // reads the ArenaHeader word) takes a SIGSEGV and kills the
+        // whole process.
+        //
+        // A real arena pointer cannot land in the first 64 KiB of the
+        // virtual address space (that range is always either unmapped
+        // or owned by the dynamic loader on the platforms scryer
+        // supports), and it is always aligned to the ArenaHeader
+        // layout. Anything else came from a writer that stamped
+        // non-pointer bits into a Cons cell -- almost certainly a
+        // bug elsewhere, but we would rather convert it into a
+        // unification failure than tear the process down.
+        let raw = ptr.get_ptr() as usize;
+        if raw < 0x10000 || raw % core::mem::align_of::<ArenaHeader>() != 0 {
+            self.fail = true;
+            return;
+        }
+
         if let Some(ptr2) = value.to_untyped_arena_ptr() {
             if ptr.get_ptr() == ptr2.get_ptr() {
                 return;
@@ -582,5 +602,55 @@ impl<U: Unifier> Unifier for CompositeUnifierForOccursCheckWithError<U> {
 
             self.throw_exception(err);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::machine::machine_state::MachineState;
+
+    /// Regression for the SIGSEGV reported against a Prolog worker
+    /// using postgresql-prolog's extended-protocol wire client.
+    ///
+    /// A heap cell tagged `Cons` whose lower-61-bit payload is a
+    /// small integer (the field happened to carry `0x301c7`, a
+    /// `weaving_status.ust_id` value escaped from a column decode
+    /// somewhere) used to crash the process at the `ldr x8, [x23]`
+    /// inside `unify_constant`: scryer dereferenced the payload as
+    /// an `*const ArenaHeader` even though `0x301c7` is below the
+    /// lowest mmap'd page and therefore unmapped.
+    ///
+    /// With the defensive guard added in `unify_constant`, the same
+    /// corrupted cell now produces a unification failure
+    /// (`wam.fail == true`) instead of a SIGSEGV. The test pushes
+    /// the bogus cell paired with a fresh unbound variable onto the
+    /// PDL, runs one unify cycle, and asserts the failure flag.
+    #[test]
+    fn unify_constant_rejects_bogus_arena_ptr_below_first_page() {
+        let mut wam = MachineState::new();
+
+        let var_loc = wam.heap.cell_len();
+        wam.heap
+            .push_cell(heap_loc_as_cell!(var_loc))
+            .expect("seed an unbound var on the heap");
+
+        // A Cons-tagged cell whose lower 61 bits are 0x301c7 -- the
+        // exact value lldb reported in x23 at the crash site.
+        let bogus_cons = HeapCellValue::build_with(HeapCellValueTag::Cons, 0x301c7);
+
+        // PDL pops last-pushed first, so push the var first and the
+        // bogus Cons cell second to make `s1 = bogus_cons` and
+        // exercise the `Cons` arm of unify_internal.
+        wam.pdl.push(heap_loc_as_cell!(var_loc));
+        wam.pdl.push(bogus_cons);
+
+        let mut unifier = DefaultUnifier::from(&mut wam);
+        unifier.unify_internal();
+
+        assert!(
+            wam.fail,
+            "unify_constant must reject a bogus arena pointer instead of dereferencing it"
+        );
     }
 }
