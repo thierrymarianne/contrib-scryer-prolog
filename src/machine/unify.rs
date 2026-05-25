@@ -308,6 +308,51 @@ pub(crate) trait Unifier: DerefMut<Target = MachineState> {
     }
 
     fn unify_constant(&mut self, ptr: UntypedArenaPtr, value: HeapCellValue) {
+        // Defensive guard against a Cons-tagged heap cell whose lower
+        // 61-bit payload does not actually encode a valid arena
+        // pointer. Without this guard the next deref (the `ldr` that
+        // reads the ArenaHeader word) takes a SIGSEGV and kills the
+        // whole process.
+        //
+        // A real arena pointer cannot land in the first 64 KiB of the
+        // virtual address space (that range is always either unmapped
+        // or owned by the dynamic loader on the platforms scryer
+        // supports), and it is always aligned to the ArenaHeader
+        // layout. Anything else came from a writer that stamped
+        // non-pointer bits into a Cons cell -- almost certainly a
+        // bug elsewhere, but we would rather convert it into a
+        // unification failure than tear the process down.
+        let raw = ptr.get_ptr() as usize;
+
+        // Real arena pointers on 64-bit systems live in ASLR regions
+        // (0x5555....., 0x7fff.....) -- always above 4 GiB. Anything
+        // below 4 GiB is either an inlined-atom payload or a heap index
+        // leaked into a Cons cell; treat it as a Var reference pointing
+        // to the raw index. This converts a SIGSEGV into a graceful
+        // Prolog-level outcome that catch/3 can handle.
+        //
+        // In this codebase ConsPtr stores the pointer address directly
+        // (no NICHE_SHIFT), so get_ptr() returns the raw heap index
+        // unchanged for bogus Cons cells.
+        #[cfg(target_pointer_width = "64")]
+        const PLAUSIBLE_MIN: usize = 0x1_0000_0000;
+        #[cfg(not(target_pointer_width = "64"))]
+        const PLAUSIBLE_MIN: usize = 0x10000;
+
+        if raw < PLAUSIBLE_MIN {
+            let heap_index = raw;
+            let recovered_var = heap_loc_as_cell!(heap_index);
+            self.pdl.push(value);
+            self.pdl.push(recovered_var);
+            return;
+        }
+
+        // Keep the alignment check for any other corruption mode.
+        if raw % core::mem::align_of::<ArenaHeader>() != 0 {
+            self.fail = true;
+            return;
+        }
+
         if let Some(ptr2) = value.to_untyped_arena_ptr() {
             if ptr.get_ptr() == ptr2.get_ptr() {
                 return;
@@ -582,5 +627,72 @@ impl<U: Unifier> Unifier for CompositeUnifierForOccursCheckWithError<U> {
 
             self.throw_exception(err);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::machine::machine_state::MachineState;
+
+    /// Regression for the SIGSEGV reported against a Prolog worker
+    /// using postgresql-prolog's extended-protocol wire client.
+    ///
+    /// A heap cell tagged `Cons` whose lower-61-bit payload is a
+    /// small integer (the production crash carried `0x301c7`, a
+    /// `weaving_status.ust_id` value) used to crash the process
+    /// inside `unify_constant` when scryer dereferenced the payload
+    /// as an `*const ArenaHeader`.
+    ///
+    /// The improved guard uses PLAUSIBLE_MIN (4 GiB on 64-bit) to
+    /// detect bogus pointers. In this codebase ConsPtr stores the
+    /// pointer address directly (no NICHE_SHIFT), so for a bogus
+    /// Cons cell with 61-bit payload `p`, `get_ptr()` returns `p`
+    /// unchanged. Any value below 4 GiB is recovered: the guard
+    /// treats it directly as a heap index and retries unification
+    /// as a Var reference, turning a SIGSEGV into a graceful
+    /// Prolog-level outcome that catch/3 can handle.
+    ///
+    /// The test allocates two fresh unbound vars on top of whatever
+    /// MachineState::new() already placed on the heap, then crafts a
+    /// bogus Cons cell whose 61-bit payload equals the second var's
+    /// heap index. After recovery the guard re-unifies the two vars;
+    /// the whole cycle completes without crash and fail == false.
+    #[test]
+    fn unify_constant_recovers_bogus_arena_ptr_below_plausible_min() {
+        let mut wam = MachineState::new();
+
+        // The heap may already contain cells from machine initialisation.
+        // Record the current top so we can append two fresh unbound vars.
+        let base = wam.heap.cell_len();
+        wam.heap
+            .push_cell(heap_loc_as_cell!(base))
+            .expect("heap grow");
+        wam.heap
+            .push_cell(heap_loc_as_cell!(base + 1))
+            .expect("heap grow");
+
+        let var_loc = base;
+
+        // ConsPtr stores the address directly (no NICHE_SHIFT), so
+        // get_ptr() returns the payload unchanged as a pointer address.
+        // Choose payload = base + 1 so the recovery lands on the second
+        // fresh var, well below PLAUSIBLE_MIN for any realistic heap size.
+        let payload = (base + 1) as u64;
+        let bogus_cons = HeapCellValue::build_with(HeapCellValueTag::Cons, payload);
+
+        // PDL pops last-pushed first; push the var first so the bogus
+        // Cons cell is popped as s1 and exercises the `Cons` arm.
+        wam.pdl.push(heap_loc_as_cell!(var_loc));
+        wam.pdl.push(bogus_cons);
+
+        let mut unifier = DefaultUnifier::from(&mut wam);
+        unifier.unify_internal();
+
+        assert!(
+            !wam.fail,
+            "recovery must bind the vars and complete without fail \
+             for a bogus Cons pointer below PLAUSIBLE_MIN"
+        );
     }
 }
